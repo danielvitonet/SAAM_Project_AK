@@ -58,66 +58,94 @@ def compute_covariance_matrix(returns_df, window=120):
 
 def optimize_portfolio(returns, cov_matrix, risk_aversion=1.0):
     """
-    Optimize portfolio weights using mean-variance optimization with more conservative constraints.
+    Optimize portfolio weights using mean-variance optimization with robust constraints.
     """
-    n_assets = cov_matrix.shape[0]
-    
-    # Calculate expected returns (sample mean)
-    mu = returns.mean(axis=0).to_numpy()  # Convert to numpy array
-    
-    # Scale returns to be in percentage terms
-    mu = mu * 100
-    
-    # Convert covariance matrix to numpy array and scale to percentage terms
-    cov_matrix_np = cov_matrix.to_numpy() * 10000  # Scale by 100^2 for percentage terms
-    
-    # Ensure covariance matrix is symmetric
-    cov_matrix_np = (cov_matrix_np + cov_matrix_np.T) / 2
-    
-    # Add regularization to diagonal to improve conditioning
-    cov_matrix_np = cov_matrix_np + 1e-4 * np.eye(n_assets)
-    
-    # Define optimization problem
-    w = cp.Variable(n_assets)
-    ret = mu @ w
-    risk = cp.quad_form(w, cov_matrix_np)
-    
-    # Define objective function (mean-variance utility)
-    objective = cp.Maximize(ret - risk_aversion * risk)
-    
-    # Define more conservative constraints
-    constraints = [
-        cp.sum(w) == 1,     # Budget constraint
-        w >= 0,             # Long-only constraint
-        w <= 0.1            # Maximum 10% in any asset
-    ]
-    
-    # Solve optimization problem
-    prob = cp.Problem(objective, constraints)
     try:
-        prob.solve(solver=cp.OSQP, eps_abs=1e-5, eps_rel=1e-5, max_iter=10000)
+        n_assets = cov_matrix.shape[0]
         
-        if prob.status == 'optimal':
-            # Get the optimal weights
-            weights = w.value
+        # Calculate expected returns (sample mean)
+        mu = returns.mean(axis=0).to_numpy()  # Convert to numpy array
+        
+        # Handle extreme values in expected returns
+        mu = np.clip(mu, -0.05, 0.05)  # Limit monthly returns to ±5%
+        
+        # Convert covariance matrix to numpy array
+        cov_matrix_np = cov_matrix.to_numpy()
+        
+        # Ensure covariance matrix is symmetric
+        cov_matrix_np = (cov_matrix_np + cov_matrix_np.T) / 2
+        
+        # Add regularization to diagonal to improve conditioning
+        min_eigenval = np.linalg.eigvalsh(cov_matrix_np)[0]
+        if min_eigenval < 1e-6:
+            regularization = abs(min_eigenval) + 1e-6
+            cov_matrix_np += regularization * np.eye(n_assets)
+        
+        # Define optimization problem
+        w = cp.Variable(n_assets)
+        ret = mu @ w
+        risk = cp.quad_form(w, cov_matrix_np)
+        
+        # Define objective function (mean-variance utility)
+        objective = cp.Maximize(ret - risk_aversion * risk)
+        
+        # Define robust constraints
+        constraints = [
+            cp.sum(w) == 1,     # Budget constraint
+            w >= 0.001,         # Minimum weight of 0.1%
+            w <= 0.05,          # Maximum weight of 5%
+            cp.sum(w >= 0.01) >= 20  # At least 20 assets with weight >= 1%
+        ]
+        
+        # Solve optimization problem
+        prob = cp.Problem(objective, constraints)
+        try:
+            prob.solve(solver=cp.OSQP, eps_abs=1e-6, eps_rel=1e-6, max_iter=10000)
             
-            # Clean up small weights (less than 0.1%)
-            weights[np.abs(weights) < 0.001] = 0.0
-            
-            # Renormalize to ensure sum is exactly 1.0
-            if np.sum(weights) > 0:
-                weights = weights / np.sum(weights)
+            if prob.status == 'optimal':
+                # Get the optimal weights
+                weights = w.value
+                
+                # Clean up small weights
+                weights[weights < 0.001] = 0.0
+                
+                # Renormalize to ensure sum is exactly 1.0
+                if np.sum(weights) > 0:
+                    weights = weights / np.sum(weights)
+                else:
+                    print("Warning: All weights are zero after cleanup")
+                    # Use equal weights for top 20 assets by Sharpe ratio
+                    asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
+                    top_20_idx = np.argsort(asset_sharpe)[-20:]
+                    weights = np.zeros(n_assets)
+                    weights[top_20_idx] = 1/20
+                
+                return weights
             else:
-                print("Warning: All weights are zero after cleanup")
-                weights = np.ones(n_assets) / n_assets  # Equal weights as fallback
-            
+                print(f"Warning: Optimization not optimal. Status: {prob.status}")
+                # Use equal weights for top 20 assets by Sharpe ratio
+                asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
+                top_20_idx = np.argsort(asset_sharpe)[-20:]
+                weights = np.zeros(n_assets)
+                weights[top_20_idx] = 1/20
+                return weights
+        except Exception as e:
+            print(f"Error in optimization: {str(e)}")
+            # Use equal weights for top 20 assets by Sharpe ratio
+            asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
+            top_20_idx = np.argsort(asset_sharpe)[-20:]
+            weights = np.zeros(n_assets)
+            weights[top_20_idx] = 1/20
             return weights
-        else:
-            print(f"Warning: Optimization not optimal. Status: {prob.status}")
-            return None
+            
     except Exception as e:
-        print(f"Error in optimization: {str(e)}")
-        return None
+        print(f"Error in portfolio optimization: {str(e)}")
+        # Use equal weights for top 20 assets by Sharpe ratio
+        asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
+        top_20_idx = np.argsort(asset_sharpe)[-20:]
+        weights = np.zeros(n_assets)
+        weights[top_20_idx] = 1/20
+        return weights
 
 def compute_rolling_optimal_weights(returns_df, window_size=120, risk_aversion=1.0):
     """
@@ -139,52 +167,69 @@ def compute_rolling_optimal_weights(returns_df, window_size=120, risk_aversion=1
         r_date = time_cols[t]
         print(f"\nProcessing rebalancing date: {r_date}")
         
-        # Get window data
-        window_cols = time_cols[t-window_size:t]
-        window_data = numeric_data[window_cols].T  # Transpose to get time x assets
-        print(f"Window data shape: {window_data.shape}")
-        
-        # Handle missing and infinite values
-        missing_count = window_data.isna().sum().sum()
-        print(f"Missing values in window: {missing_count}")
-        
-        # Replace infinite values with NaN first
-        window_data = window_data.replace([np.inf, -np.inf], np.nan)
-        
-        # Fill missing values with column means
-        window_data = window_data.fillna(window_data.mean())
-        
-        # Replace any remaining NaN (if entire column was NaN) with 0
-        window_data = window_data.fillna(0)
-        
-        # Compute covariance matrix for assets
-        cov_matrix = window_data.cov()  # This will be assets x assets
-        print(f"Covariance matrix shape: {cov_matrix.shape}")
-        print(f"Covariance matrix range: [{cov_matrix.min().min()}, {cov_matrix.max().max()}]")
-        
-        # Optimize portfolio
-        optimal_weights = optimize_portfolio(window_data, cov_matrix, risk_aversion)
-        
-        if optimal_weights is not None:
-            weights.iloc[:, t] = optimal_weights
-            print(f"Sum of weights: {np.sum(optimal_weights)}")
-            print(f"Number of non-zero weights: {np.sum(np.abs(optimal_weights) > 0.001)}")
+        try:
+            # Get window data
+            window_cols = time_cols[t-window_size:t]
+            window_data = numeric_data[window_cols].T  # Transpose to get time x assets
+            print(f"Window data shape: {window_data.shape}")
             
-            # Calculate portfolio return for the next period
-            if t + 1 < len(time_cols):
-                next_return = numeric_data[time_cols[t+1]]
-                portfolio_return = np.sum(optimal_weights * next_return)
-                portfolio_returns[time_cols[t]] = portfolio_return
-        else:
-            print("Warning: Optimization failed for this window")
-            # Use equal weights as fallback
-            equal_weights = np.ones(len(returns_df)) / len(returns_df)
-            weights.iloc[:, t] = equal_weights
+            # Handle missing and infinite values
+            missing_count = window_data.isna().sum().sum()
+            inf_count = np.isinf(window_data).sum().sum()
+            print(f"Missing values in window: {missing_count}")
+            print(f"Infinite values in window: {inf_count}")
             
-            if t + 1 < len(time_cols):
-                next_return = numeric_data[time_cols[t+1]]
-                portfolio_return = np.sum(equal_weights * next_return)
-                portfolio_returns[time_cols[t]] = portfolio_return
+            # Replace infinite values with NaN first
+            window_data = window_data.replace([np.inf, -np.inf], np.nan)
+            
+            # Fill missing values with column means
+            window_data = window_data.fillna(window_data.mean())
+            
+            # Replace any remaining NaN (if entire column was NaN) with 0
+            window_data = window_data.fillna(0)
+            
+            # Check for any remaining invalid values
+            if window_data.isna().any().any() or np.isinf(window_data).any().any():
+                print("Warning: Invalid values still present after cleaning")
+                continue
+            
+            # Compute covariance matrix for assets
+            cov_matrix = window_data.cov()  # This will be assets x assets
+            print(f"Covariance matrix shape: {cov_matrix.shape}")
+            print(f"Covariance matrix range: [{cov_matrix.min().min()}, {cov_matrix.max().max()}]")
+            
+            # Check if covariance matrix is valid
+            if cov_matrix.isna().any().any() or np.isinf(cov_matrix).any().any():
+                print("Warning: Invalid values in covariance matrix")
+                continue
+            
+            # Optimize portfolio
+            optimal_weights = optimize_portfolio(window_data, cov_matrix, risk_aversion)
+            
+            if optimal_weights is not None:
+                weights.iloc[:, t] = optimal_weights
+                print(f"Sum of weights: {np.sum(optimal_weights)}")
+                print(f"Number of non-zero weights: {np.sum(np.abs(optimal_weights) > 0.001)}")
+                
+                # Calculate portfolio return for the next period
+                if t + 1 < len(time_cols):
+                    next_return = numeric_data[time_cols[t+1]]
+                    portfolio_return = np.sum(optimal_weights * next_return)
+                    portfolio_returns[time_cols[t]] = portfolio_return
+            else:
+                print("Warning: Optimization failed for this window")
+                # Use equal weights as fallback
+                equal_weights = np.ones(len(returns_df)) / len(returns_df)
+                weights.iloc[:, t] = equal_weights
+                
+                if t + 1 < len(time_cols):
+                    next_return = numeric_data[time_cols[t+1]]
+                    portfolio_return = np.sum(equal_weights * next_return)
+                    portfolio_returns[time_cols[t]] = portfolio_return
+                    
+        except Exception as e:
+            print(f"Error processing window at {r_date}: {str(e)}")
+            continue
     
     # Create a dictionary of weights for each rebalancing date
     weights_dict = {col: weights[col] for col in weights.columns[window_size:]}
