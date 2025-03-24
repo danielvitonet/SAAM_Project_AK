@@ -2,6 +2,10 @@ import os
 import pandas as pd
 import numpy as np
 import cvxpy as cp
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 def calculate_expected_returns(returns_df, window=120):
     """
@@ -23,348 +27,332 @@ def calculate_expected_returns(returns_df, window=120):
     expected_returns = numeric_data.iloc[:, -window:].mean(axis=1)
     return expected_returns
 
-def compute_covariance_matrix(returns_df, window=120):
+def handle_missing_returns(returns_df):
     """
-    Compute the covariance matrix of monthly returns for each firm using the last 'window' months,
-    following the formula:
-    
-      Σ = (1/τ) * Σ_{k=0}^{τ-1} (R_{t-k} - μ)(R_{t-k} - μ)'
-    
-    where μ is the expected return computed over the last 'window' months.
-    
-    This function reuses calculate_expected_returns to avoid duplicate computations.
-    
-    Parameters:
-        returns_df (pd.DataFrame): DataFrame containing monthly returns data with metadata in the first two columns.
-        window (int): Number of months to use for estimation (default is 120).
-    
-    Returns:
-        cov_matrix (pd.DataFrame): Covariance matrix (symmetric) of the firms' returns. The index and columns
-                                   are set using the firm identifiers from the first metadata column.
-    """
-    numeric_data = returns_df.iloc[:, 2:].apply(pd.to_numeric, errors='coerce')
-    if numeric_data.shape[1] < window:
-        window = numeric_data.shape[1]
-    window_data = numeric_data.iloc[:, -window:]
-    
-    # Get expected returns over the window
-    mu = calculate_expected_returns(returns_df, window=window)
-    diff = window_data.sub(mu, axis=0)
-    Sigma_np = diff.dot(diff.T) / window
-    
-    identifiers = returns_df.iloc[:, 0]
-    cov_matrix = pd.DataFrame(Sigma_np, index=identifiers, columns=identifiers)
-    return cov_matrix
-
-def optimize_portfolio(returns, cov_matrix, risk_aversion=1.0):
-    """
-    Optimize portfolio weights using mean-variance optimization with robust constraints.
-    """
-    try:
-        n_assets = cov_matrix.shape[0]
-        
-        # Calculate expected returns (sample mean)
-        mu = returns.mean(axis=0).to_numpy()  # Convert to numpy array
-        
-        # Handle extreme values in expected returns
-        mu = np.clip(mu, -0.05, 0.05)  # Limit monthly returns to ±5%
-        
-        # Convert covariance matrix to numpy array
-        cov_matrix_np = cov_matrix.to_numpy()
-        
-        # Ensure covariance matrix is symmetric
-        cov_matrix_np = (cov_matrix_np + cov_matrix_np.T) / 2
-        
-        # Add regularization to diagonal to improve conditioning
-        min_eigenval = np.linalg.eigvalsh(cov_matrix_np)[0]
-        if min_eigenval < 1e-6:
-            regularization = abs(min_eigenval) + 1e-6
-            cov_matrix_np += regularization * np.eye(n_assets)
-        
-        # Define optimization problem
-        w = cp.Variable(n_assets)
-        ret = mu @ w
-        risk = cp.quad_form(w, cov_matrix_np)
-        
-        # Define objective function (mean-variance utility)
-        objective = cp.Maximize(ret - risk_aversion * risk)
-        
-        # Define robust constraints
-        constraints = [
-            cp.sum(w) == 1,     # Budget constraint
-            w >= 0.001,         # Minimum weight of 0.1%
-            w <= 0.05,          # Maximum weight of 5%
-            cp.sum(w >= 0.01) >= 20  # At least 20 assets with weight >= 1%
-        ]
-        
-        # Solve optimization problem
-        prob = cp.Problem(objective, constraints)
-        try:
-            prob.solve(solver=cp.OSQP, eps_abs=1e-6, eps_rel=1e-6, max_iter=10000)
-            
-            if prob.status == 'optimal':
-                # Get the optimal weights
-                weights = w.value
-                
-                # Clean up small weights
-                weights[weights < 0.001] = 0.0
-                
-                # Renormalize to ensure sum is exactly 1.0
-                if np.sum(weights) > 0:
-                    weights = weights / np.sum(weights)
-                else:
-                    print("Warning: All weights are zero after cleanup")
-                    # Use equal weights for top 20 assets by Sharpe ratio
-                    asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
-                    top_20_idx = np.argsort(asset_sharpe)[-20:]
-                    weights = np.zeros(n_assets)
-                    weights[top_20_idx] = 1/20
-                
-                return weights
-            else:
-                print(f"Warning: Optimization not optimal. Status: {prob.status}")
-                # Use equal weights for top 20 assets by Sharpe ratio
-                asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
-                top_20_idx = np.argsort(asset_sharpe)[-20:]
-                weights = np.zeros(n_assets)
-                weights[top_20_idx] = 1/20
-                return weights
-        except Exception as e:
-            print(f"Error in optimization: {str(e)}")
-            # Use equal weights for top 20 assets by Sharpe ratio
-            asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
-            top_20_idx = np.argsort(asset_sharpe)[-20:]
-            weights = np.zeros(n_assets)
-            weights[top_20_idx] = 1/20
-            return weights
-            
-    except Exception as e:
-        print(f"Error in portfolio optimization: {str(e)}")
-        # Use equal weights for top 20 assets by Sharpe ratio
-        asset_sharpe = mu / np.sqrt(np.diag(cov_matrix_np))
-        top_20_idx = np.argsort(asset_sharpe)[-20:]
-        weights = np.zeros(n_assets)
-        weights[top_20_idx] = 1/20
-        return weights
-
-def compute_rolling_optimal_weights(returns_df, window_size=120, risk_aversion=1.0):
-    """
-    Compute optimal portfolio weights using a rolling window approach.
+    Clean returns data by handling missing values and removing problematic assets.
     """
     # Get numeric data only (skip metadata columns)
     numeric_data = returns_df.iloc[:, 2:].apply(pd.to_numeric, errors='coerce')
-    time_cols = returns_df.columns[2:]
     
-    # Convert time columns to datetime
-    dt_cols = pd.to_datetime(time_cols, format='%Y-%m-%d', errors='coerce')
+    # Remove assets with >50% missing values
+    missing_pct = numeric_data.isna().mean(axis=1)
+    valid_assets = missing_pct <= 0.5
+    numeric_data = numeric_data[valid_assets]
     
-    # Initialize weights DataFrame with same structure as returns
-    weights = pd.DataFrame(0, index=returns_df.index, columns=time_cols)
-    portfolio_returns = pd.Series(0, index=time_cols)
+    # Fill missing values and handle infinities
+    numeric_data = numeric_data.ffill().bfill()
+    numeric_data = numeric_data.replace([np.inf, -np.inf], np.nan).fillna(numeric_data.mean())
     
-    # For each time period after the initial window
-    for t in range(window_size, len(time_cols)):
-        r_date = time_cols[t]
-        print(f"\nProcessing rebalancing date: {r_date}")
-        
-        try:
-            # Get window data
-            window_cols = time_cols[t-window_size:t]
-            window_data = numeric_data[window_cols].T  # Transpose to get time x assets
-            print(f"Window data shape: {window_data.shape}")
-            
-            # Handle missing and infinite values
-            missing_count = window_data.isna().sum().sum()
-            inf_count = np.isinf(window_data).sum().sum()
-            print(f"Missing values in window: {missing_count}")
-            print(f"Infinite values in window: {inf_count}")
-            
-            # Replace infinite values with NaN first
-            window_data = window_data.replace([np.inf, -np.inf], np.nan)
-            
-            # Fill missing values with column means
-            window_data = window_data.fillna(window_data.mean())
-            
-            # Replace any remaining NaN (if entire column was NaN) with 0
-            window_data = window_data.fillna(0)
-            
-            # Check for any remaining invalid values
-            if window_data.isna().any().any() or np.isinf(window_data).any().any():
-                print("Warning: Invalid values still present after cleaning")
-                continue
-            
-            # Compute covariance matrix for assets
-            cov_matrix = window_data.cov()  # This will be assets x assets
-            print(f"Covariance matrix shape: {cov_matrix.shape}")
-            print(f"Covariance matrix range: [{cov_matrix.min().min()}, {cov_matrix.max().max()}]")
-            
-            # Check if covariance matrix is valid
-            if cov_matrix.isna().any().any() or np.isinf(cov_matrix).any().any():
-                print("Warning: Invalid values in covariance matrix")
-                continue
-            
-            # Optimize portfolio
-            optimal_weights = optimize_portfolio(window_data, cov_matrix, risk_aversion)
-            
-            if optimal_weights is not None:
-                weights.iloc[:, t] = optimal_weights
-                print(f"Sum of weights: {np.sum(optimal_weights)}")
-                print(f"Number of non-zero weights: {np.sum(np.abs(optimal_weights) > 0.001)}")
-                
-                # Calculate portfolio return for the next period
-                if t + 1 < len(time_cols):
-                    next_return = numeric_data[time_cols[t+1]]
-                    portfolio_return = np.sum(optimal_weights * next_return)
-                    portfolio_returns[time_cols[t]] = portfolio_return
-            else:
-                print("Warning: Optimization failed for this window")
-                # Use equal weights as fallback
-                equal_weights = np.ones(len(returns_df)) / len(returns_df)
-                weights.iloc[:, t] = equal_weights
-                
-                if t + 1 < len(time_cols):
-                    next_return = numeric_data[time_cols[t+1]]
-                    portfolio_return = np.sum(equal_weights * next_return)
-                    portfolio_returns[time_cols[t]] = portfolio_return
-                    
-        except Exception as e:
-            print(f"Error processing window at {r_date}: {str(e)}")
-            continue
+    # Create cleaned DataFrame
+    cleaned_returns = returns_df[valid_assets].copy()
+    cleaned_returns.iloc[:, 2:] = numeric_data
     
-    # Create a dictionary of weights for each rebalancing date
-    weights_dict = {col: weights[col] for col in weights.columns[window_size:]}
-    
-    return weights_dict, portfolio_returns[:-1]  # Exclude the last period since we don't have next period returns
+    return cleaned_returns
 
-def compute_ex_post_returns(returns_df, weights_dict, horizon=12):
+def compute_covariance_matrix(returns_df, window=60):
     """
-    Compute the ex-post monthly portfolio returns for the following 'horizon' months for each rebalancing date.
-    
-    For each rebalancing date, the function identifies the first 'horizon' months of return data after that date
-    (columns in ISO format) and computes the portfolio return as the weighted sum of individual firm returns.
-    
-    Parameters:
-        returns_df (pd.DataFrame): DataFrame with monthly returns (metadata in first two columns).
-        weights_dict (dict): Dictionary with keys as rebalancing dates and values as optimal weight Series.
-        horizon (int): Number of months to compute ex-post returns for each rebalancing date (default is 12).
-    
-    Returns:
-        ex_post_dict (dict): Dictionary mapping each rebalancing date to a pandas Series of ex-post portfolio returns.
+    Compute a stable covariance matrix using a rolling window.
     """
-    time_cols = returns_df.columns[2:]
-    dt_cols = pd.to_datetime(time_cols, format='%Y-%m-%d', errors='coerce')
     numeric_data = returns_df.iloc[:, 2:].apply(pd.to_numeric, errors='coerce')
-    ex_post_dict = {}
+    window_data = numeric_data.iloc[:, -window:]
     
-    for r_date, weights in weights_dict.items():
-        r_date_ts = pd.to_datetime(r_date, format='%Y-%m-%d', errors='coerce')
-        mask = dt_cols > r_date_ts
-        future_cols = numeric_data.columns[mask]
-        
-        if len(future_cols) < horizon:
-            print(f"Not enough future data for rebalancing date {r_date}. Expected horizon: {horizon}, available: {len(future_cols)}. Skipping.")
-            continue
-        
-        horizon_cols = future_cols[:horizon]
-        horizon_data = numeric_data[horizon_cols]
-        portfolio_returns = horizon_data.mul(weights, axis=0).sum(axis=0)
-        ex_post_dict[r_date] = portfolio_returns
-        
-    return ex_post_dict
+    # Handle any remaining NaN or inf values
+    window_data = window_data.replace([np.inf, -np.inf], np.nan)
+    window_data = window_data.fillna(window_data.mean())
+    
+    # Standardize data to improve numerical stability
+    scaler = (window_data.std() + 1e-8)  # Add small constant to avoid division by zero
+    standardized_data = window_data / scaler
+    
+    # Compute covariance matrix
+    cov_matrix = standardized_data.cov()
+    
+    # Scale back to original units
+    cov_matrix = cov_matrix * scaler.values.reshape(-1, 1) * scaler.values.reshape(1, -1)
+    
+    # Ensure positive definiteness
+    cov_matrix = (cov_matrix + cov_matrix.T) / 2
+    min_eig = np.linalg.eigvalsh(cov_matrix)[0]
+    if min_eig < 1e-6:  # Increased threshold for better stability
+        reg = abs(min_eig) + 1e-6
+        cov_matrix += reg * np.eye(cov_matrix.shape[0])
+    
+    return cov_matrix
 
-def compute_performance_metrics(portfolio_returns):
+def optimize_portfolio(cov_matrix):
     """
-    Compute key performance metrics from a Series of monthly portfolio returns.
-    
-    Metrics computed:
-      - Annualized Average Return: (mean monthly return * 12)
-      - Annualized Volatility: (std monthly return * sqrt(12))
-      - Sharpe Ratio: Annualized Return / Annualized Volatility (risk-free rate assumed 0)
-      - Minimum and Maximum monthly returns.
-    
-    Parameters:
-        portfolio_returns (pd.Series): Series of monthly portfolio returns.
-    
-    Returns:
-        metrics (dict): Dictionary containing 'annualized_return', 'annualized_volatility',
-                        'sharpe_ratio', 'min_return', and 'max_return'.
+    Optimize portfolio weights to minimize variance.
     """
-    monthly_mean = portfolio_returns.mean()
-    monthly_std = portfolio_returns.std()
-    annualized_return = monthly_mean * 12
-    annualized_volatility = monthly_std * np.sqrt(12)
-    sharpe_ratio = annualized_return / annualized_volatility if annualized_volatility != 0 else np.nan
-    min_return = portfolio_returns.min()
-    max_return = portfolio_returns.max()
+    n_assets = cov_matrix.shape[0]
     
-    metrics = {
-        "annualized_return": annualized_return,
-        "annualized_volatility": annualized_volatility,
-        "sharpe_ratio": sharpe_ratio,
-        "min_return": min_return,
-        "max_return": max_return
+    try:
+        # Define optimization problem
+        w = cp.Variable(n_assets)
+        risk = cp.quad_form(w, cov_matrix)
+        
+        # Objective: minimize variance
+        objective = cp.Minimize(risk)
+        
+        # Constraints: sum of weights = 1, all weights >= 0
+        constraints = [cp.sum(w) == 1, w >= 0]
+        
+        # Solve using ECOS solver
+        prob = cp.Problem(objective, constraints)
+        prob.solve(solver=cp.ECOS)
+        
+        if prob.status == "optimal":
+            weights = w.value
+            weights[np.abs(weights) < 1e-4] = 0
+            weights = weights / np.sum(weights)  # Renormalize
+            return weights
+        else:
+            raise ValueError("Optimization did not converge")
+            
+    except Exception as e:
+        print(f"Optimization error: {str(e)}")
+        # Fallback to equal weights
+        return np.ones(n_assets) / n_assets
+
+def compute_portfolio_metrics(returns, rf_rates):
+    """
+    Compute annualized portfolio metrics.
+    """
+    ann_factor = 12  # Monthly to annual conversion
+    
+    # Handle any NaN values
+    returns = returns.fillna(0)
+    rf_rates = rf_rates.fillna(0)
+    
+    # Compute annualized metrics
+    mean_return = returns.mean() * ann_factor
+    volatility = returns.std() * np.sqrt(ann_factor)
+    avg_rf_rate = rf_rates.mean() * ann_factor
+    
+    # Compute Sharpe ratio
+    excess_return = mean_return - avg_rf_rate
+    sharpe_ratio = excess_return / volatility if volatility > 1e-8 else 0
+    
+    return {
+        'annualized_return': mean_return,
+        'annualized_volatility': volatility,
+        'avg_rf_rate': avg_rf_rate,
+        'sharpe_ratio': sharpe_ratio,
+        'min_return': returns.min(),
+        'max_return': returns.max()
     }
-    return metrics
 
-def run_optimization_routine(returns_df, rebalancing_dates, estimation_window=120, horizon=12):
+def run_portfolio_optimization(returns_df):
     """
-    Run the full optimization routine over the sample period.
-    
-    For each rebalancing date (ISO string), the function:
-      - Uses the last 'estimation_window' months of returns prior to the rebalancing date to compute the covariance matrix
-        (using the outer-product averaging method) and then the optimal portfolio weights via optimize_portfolio.
-      - Computes the ex-post portfolio returns for the following 'horizon' months as the weighted sum of individual firm returns.
-      - Calculates performance metrics for these ex-post returns:
-            * Annualized Return, Annualized Volatility, Sharpe Ratio, Minimum and Maximum monthly returns.
-    
-    Parameters:
-        returns_df (pd.DataFrame): DataFrame containing monthly returns data for each firm.
-                                   Expected structure: first two columns are metadata (e.g., 'Name', 'ISIN'),
-                                   and the remaining columns are monthly returns (in ISO format "YYYY-MM-DD")
-                                   sorted in chronological order.
-        rebalancing_dates (list): List of rebalancing dates as ISO strings (e.g., "2013-12-31").
-        estimation_window (int): Number of months used for estimation (default 120).
-        horizon (int): Number of months to compute ex-post returns for each rebalancing date (default 12).
-    
-    Returns:
-        results (dict): Dictionary where each key is a rebalancing date and its value is another dictionary with:
-             'weights'              : Optimal portfolio weights (pd.Series) at that rebalancing date.
-             'ex_post_returns'      : Series of ex-post monthly portfolio returns for the following 'horizon' months.
-             'performance_metrics'  : Dictionary with performance metrics.
+    Run the complete portfolio optimization process with annual rebalancing.
     """
-    weights_dict, portfolio_returns = compute_rolling_optimal_weights(returns_df, window_size=estimation_window)
-    ex_post_dict = compute_ex_post_returns(returns_df, weights_dict, horizon=horizon)
+    # Clean returns data
+    returns_df = handle_missing_returns(returns_df)
+    print(f"\nShape after cleaning: {returns_df.shape}")
     
-    results = {}
-    for r_date in weights_dict:
-        if r_date not in ex_post_dict:
-            print(f"Skipping {r_date} due to insufficient future data.")
+    # Get numeric data and dates
+    numeric_data = returns_df.iloc[:, 2:].apply(pd.to_numeric, errors='coerce')
+    time_cols = returns_df.columns[2:]
+    dt_cols = pd.to_datetime(time_cols)
+    
+    # Read risk-free rates
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    rf_file = os.path.join(base_dir, "..", "Data", "Risk_Free_Rate.xlsx")
+    
+    try:
+        # Read and process risk-free rates
+        rf_data = pd.read_excel(rf_file)
+        dates = pd.to_datetime(rf_data.iloc[:, 0].astype(str).str.pad(6, fillchar='0'), format='%Y%m')
+        rates = pd.to_numeric(rf_data.iloc[:, 1], errors='coerce') / 100.0
+        
+        # Create clean risk-free rates series
+        rf_df = pd.DataFrame({'date': dates, 'rate': rates}).dropna()
+        rf_df = rf_df.groupby('date')['rate'].mean().reset_index()
+        rf_rates = pd.Series(rf_df['rate'].values, index=rf_df['date'])
+        
+        # Align with returns dates
+        aligned_rates = []
+        for date in dt_cols:
+            mask = rf_rates.index <= date
+            rate = rf_rates[mask].iloc[-1] if mask.any() else rf_rates.iloc[0]
+            aligned_rates.append(rate)
+        
+        rf_rates = pd.Series(aligned_rates, index=dt_cols)
+        
+    except Exception as e:
+        print(f"\nError reading risk-free rates: {str(e)}")
+        rf_rates = pd.Series(0, index=time_cols)
+    
+    # Initialize results
+    weights_dict = {}
+    ex_post_returns = pd.Series(index=time_cols, dtype=float)
+    
+    # Process each year from 2013 to 2023
+    for year in range(2013, 2024):
+        print(f"\nProcessing year: {year}")
+        
+        # Find rebalancing date
+        rebalancing_date = pd.Timestamp(f"{year}-12-31")
+        closest_date = dt_cols[dt_cols <= rebalancing_date].max()
+        
+        if closest_date is None:
+            continue
+            
+        # Get window data
+        t = time_cols.get_loc(closest_date.strftime('%Y-%m-%d'))
+        window_size = 60
+        if t < window_size:
             continue
         
-        weights = weights_dict[r_date]
-        ex_post_returns = ex_post_dict[r_date]
-        metrics = compute_performance_metrics(ex_post_returns)
+        window_cols = time_cols[t-window_size:t]
+        window_data = numeric_data[window_cols]
         
-        results[r_date] = {
-            "weights": weights,
-            "ex_post_returns": ex_post_returns,
-            "performance_metrics": metrics
-        }
-    return results
-
-# Allow the module to run independently for testing purposes.
-if __name__ == "__main__":
-    # Assume the returns file "Simple_Returns.xlsx" is stored in the Data folder relative to the project root.
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    data_file = os.path.join(base_dir, "..", "Data", "Simple_Returns.xlsx")
+        # Handle any NaN or inf values in window data
+        window_data = window_data.replace([np.inf, -np.inf], np.nan)
+        window_data = window_data.fillna(window_data.mean())
+        
+        # Optimize portfolio
+        cov_matrix = compute_covariance_matrix(pd.DataFrame(window_data), window=window_size)
+        weights = optimize_portfolio(cov_matrix)
+        weights_dict[closest_date.strftime('%Y-%m-%d')] = weights
+        
+        # Print portfolio statistics
+        print(f"Number of non-zero weights: {np.sum(weights > 0)}")
+        print(f"Maximum weight: {np.max(weights):.4f}")
+        print(f"Minimum non-zero weight: {np.min(weights[weights > 0]):.4f}")
+        
+        # Plot the covariance matrix and asset allocation for this year
+        plot_covariance_matrix(cov_matrix, f"Covariance Matrix (Dec {year})")
+        plot_asset_allocation(weights, f"Asset Allocation (Dec {year})")
+        
+        # Compute ex-post returns for the next year
+        if t + 1 < len(time_cols):
+            next_cols = time_cols[t+1:t+13]  # Get next 12 months
+            if len(next_cols) > 0:
+                next_returns = numeric_data[next_cols].values
+                current_weights = weights.copy()
+                
+                for i in range(len(next_cols)):
+                    month_returns = next_returns[:, i]
+                    # Handle any NaN or inf values
+                    month_returns = np.nan_to_num(month_returns, 0)
+                    
+                    # Ensure weights and returns have the same shape
+                    if len(current_weights) != len(month_returns):
+                        current_weights = np.pad(current_weights, (0, len(month_returns) - len(current_weights)))
+                    
+                    portfolio_return = np.sum(current_weights * month_returns)
+                    ex_post_returns[next_cols[i]] = portfolio_return
+                    
+                    if i < len(next_cols) - 1:
+                        # Update weights for next period
+                        current_weights = current_weights * (1 + month_returns)
+                        total_value = np.sum(current_weights)
+                        if total_value > 0:
+                            current_weights = current_weights / total_value
     
-    if os.path.exists(data_file):
-        returns_df = pd.read_excel(data_file)
-        print("Calculating expected returns:")
-        exp_returns = calculate_expected_returns(returns_df)
-        print(exp_returns.head())
-        print("\nComputing covariance matrix:")
-        cov_matrix = compute_covariance_matrix(returns_df)
-        print(cov_matrix.head())
+    # Compute final metrics
+    metrics = compute_portfolio_metrics(ex_post_returns.dropna(), rf_rates[ex_post_returns.index])
+    
+    return metrics, ex_post_returns
+
+def plot_covariance_matrix(cov_matrix, title="Covariance Matrix"):
+    """
+    Plot the covariance matrix as a heatmap with improved visualization.
+    """
+    plt.figure(figsize=(12, 10))
+    
+    # Scale the covariance matrix for better visualization
+    scaled_cov = cov_matrix.copy()
+    std_devs = np.sqrt(np.diag(scaled_cov))
+    scaled_cov = scaled_cov / (std_devs[:, np.newaxis] * std_devs[np.newaxis, :])
+    
+    # Create heatmap with better color scaling
+    heatmap = sns.heatmap(scaled_cov, 
+                         cmap='RdYlBu_r',
+                         center=0,
+                         vmin=-1,
+                         vmax=1,
+                         square=True,
+                         xticklabels=False,
+                         yticklabels=False,
+                         cbar_kws={'label': 'Correlation'})
+    
+    plt.title(f"{title}\n(Correlation Matrix View)")
+    plt.tight_layout()
+    plt.savefig('covariance_matrix.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_asset_allocation(weights, title="Asset Allocation"):
+    """
+    Plot the asset allocation as a bar chart with improved visualization.
+    """
+    plt.figure(figsize=(15, 8))
+    
+    # Convert weights to percentage
+    weights_pct = weights * 100
+    
+    # Sort weights in descending order and get non-zero weights
+    sorted_weights = pd.Series(weights_pct).sort_values(ascending=False)
+    non_zero_weights = sorted_weights[sorted_weights > 0.1]  # Show weights > 0.1%
+    
+    # Create bar plot
+    bars = plt.bar(range(len(non_zero_weights)), non_zero_weights.values)
+    
+    # Add value labels on top of each bar
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height,
+                f'{height:.1f}%',
+                ha='center', va='bottom')
+    
+    plt.title(f"{title}\n(Showing {len(non_zero_weights)} positions > 0.1%)")
+    plt.xlabel("Asset Rank")
+    plt.ylabel("Weight (%)")
+    plt.grid(True, alpha=0.3)
+    
+    # Add summary statistics
+    stats_text = f"Max Weight: {weights_pct.max():.1f}%\n"
+    stats_text += f"Min Weight (>0): {weights_pct[weights_pct > 0].min():.1f}%\n"
+    stats_text += f"Num Positions: {(weights_pct > 0).sum()}"
+    plt.text(0.02, 0.98, stats_text,
+             transform=plt.gca().transAxes,
+             verticalalignment='top',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
+    plt.savefig('asset_allocation.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+if __name__ == "__main__":
+    # Read returns data
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    returns_file = os.path.join(base_dir, "..", "Data", "Simple_Returns.xlsx")
+    
+    if os.path.exists(returns_file):
+        returns_df = pd.read_excel(returns_file)
+        print("Returns data shape:", returns_df.shape)
+        
+        # Run portfolio optimization
+        metrics, ex_post_returns = run_portfolio_optimization(returns_df)
+        
+        # Print results
+        print("\nPortfolio Characteristics (P(mv)oos):")
+        print(f"Annualized Average Return (μ̄p): {metrics['annualized_return']:.4f}")
+        print(f"Annualized Volatility (σp): {metrics['annualized_volatility']:.4f}")
+        print(f"Average Risk-free Rate: {metrics['avg_rf_rate']:.4f}")
+        print(f"Sharpe Ratio (SRp): {metrics['sharpe_ratio']:.4f}")
+        print(f"Minimum Return: {metrics['min_return']:.4f}")
+        print(f"Maximum Return: {metrics['max_return']:.4f}")
+        
+        # Plot returns
+        plt.figure(figsize=(15, 8))
+        plt.plot(ex_post_returns.index, ex_post_returns.values)
+        plt.title("Portfolio Returns Over Time")
+        plt.xlabel("Date")
+        plt.ylabel("Return")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('portfolio_returns.png')
+        plt.close()
     else:
-        print(f"Returns file not found at {data_file}")
+        print("Returns file not found.")
