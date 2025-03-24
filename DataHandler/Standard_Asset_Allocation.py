@@ -29,51 +29,35 @@ def calculate_expected_returns(returns_df, window=120):
 
 def handle_missing_returns(returns_df):
     """
-    Clean returns data by handling missing values and removing problematic assets.
+    Clean returns data by handling missing values.
+    Only interpolate single missing values.
     """
     # Get numeric data only (skip metadata columns)
     numeric_data = returns_df.iloc[:, 2:].apply(pd.to_numeric, errors='coerce')
     
-    # Remove assets with >50% missing values
-    missing_pct = numeric_data.isna().mean(axis=1)
-    valid_assets = missing_pct <= 0.5
-    numeric_data = numeric_data[valid_assets]
-    
-    # Fill missing values and handle infinities
-    numeric_data = numeric_data.ffill().bfill()
-    numeric_data = numeric_data.replace([np.inf, -np.inf], np.nan).fillna(numeric_data.mean())
+    # Interpolate single missing values
+    numeric_data = numeric_data.interpolate(method='linear', limit=1)
     
     # Create cleaned DataFrame
-    cleaned_returns = returns_df[valid_assets].copy()
+    cleaned_returns = returns_df.copy()
     cleaned_returns.iloc[:, 2:] = numeric_data
     
     return cleaned_returns
 
 def compute_covariance_matrix(returns_df, window=60):
     """
-    Compute a stable covariance matrix using a rolling window.
+    Compute covariance matrix using only existing returns data.
     """
     numeric_data = returns_df.iloc[:, 2:].apply(pd.to_numeric, errors='coerce')
     window_data = numeric_data.iloc[:, -window:]
     
-    # Handle any remaining NaN or inf values
-    window_data = window_data.replace([np.inf, -np.inf], np.nan)
-    window_data = window_data.fillna(window_data.mean())
-    
-    # Standardize data to improve numerical stability
-    scaler = (window_data.std() + 1e-8)  # Add small constant to avoid division by zero
-    standardized_data = window_data / scaler
-    
-    # Compute covariance matrix
-    cov_matrix = standardized_data.cov()
-    
-    # Scale back to original units
-    cov_matrix = cov_matrix * scaler.values.reshape(-1, 1) * scaler.values.reshape(1, -1)
+    # Compute covariance matrix directly without standardization
+    cov_matrix = window_data.cov()
     
     # Ensure positive definiteness
     cov_matrix = (cov_matrix + cov_matrix.T) / 2
     min_eig = np.linalg.eigvalsh(cov_matrix)[0]
-    if min_eig < 1e-6:  # Increased threshold for better stability
+    if min_eig < 1e-6:
         reg = abs(min_eig) + 1e-6
         cov_matrix += reg * np.eye(cov_matrix.shape[0])
     
@@ -81,7 +65,7 @@ def compute_covariance_matrix(returns_df, window=60):
 
 def optimize_portfolio(cov_matrix):
     """
-    Optimize portfolio weights to minimize variance.
+    Optimize portfolio weights to minimize variance with long-only constraint.
     """
     n_assets = cov_matrix.shape[0]
     
@@ -93,7 +77,7 @@ def optimize_portfolio(cov_matrix):
         # Objective: minimize variance
         objective = cp.Minimize(risk)
         
-        # Constraints: sum of weights = 1, all weights >= 0
+        # Constraints: sum of weights = 1, all weights >= 0 (long-only)
         constraints = [cp.sum(w) == 1, w >= 0]
         
         # Solve using ECOS solver
@@ -190,7 +174,7 @@ def run_portfolio_optimization(returns_df):
     for year in range(2013, 2024):
         print(f"\nProcessing year: {year}")
         
-        # Find rebalancing date
+        # Find rebalancing date (December)
         rebalancing_date = pd.Timestamp(f"{year}-12-31")
         closest_date = dt_cols[dt_cols <= rebalancing_date].max()
         
@@ -206,10 +190,6 @@ def run_portfolio_optimization(returns_df):
         window_cols = time_cols[t-window_size:t]
         window_data = numeric_data[window_cols]
         
-        # Handle any NaN or inf values in window data
-        window_data = window_data.replace([np.inf, -np.inf], np.nan)
-        window_data = window_data.fillna(window_data.mean())
-        
         # Optimize portfolio
         cov_matrix = compute_covariance_matrix(pd.DataFrame(window_data), window=window_size)
         weights = optimize_portfolio(cov_matrix)
@@ -220,8 +200,7 @@ def run_portfolio_optimization(returns_df):
         print(f"Maximum weight: {np.max(weights):.4f}")
         print(f"Minimum non-zero weight: {np.min(weights[weights > 0]):.4f}")
         
-        # Plot the covariance matrix and asset allocation for this year
-        plot_covariance_matrix(cov_matrix, f"Covariance Matrix (Dec {year})")
+        # Plot the asset allocation for this year
         plot_asset_allocation(weights, f"Asset Allocation (Dec {year})")
         
         # Compute ex-post returns for the next year
@@ -254,33 +233,6 @@ def run_portfolio_optimization(returns_df):
     metrics = compute_portfolio_metrics(ex_post_returns.dropna(), rf_rates[ex_post_returns.index])
     
     return metrics, ex_post_returns
-
-def plot_covariance_matrix(cov_matrix, title="Covariance Matrix"):
-    """
-    Plot the covariance matrix as a heatmap with improved visualization.
-    """
-    plt.figure(figsize=(12, 10))
-    
-    # Scale the covariance matrix for better visualization
-    scaled_cov = cov_matrix.copy()
-    std_devs = np.sqrt(np.diag(scaled_cov))
-    scaled_cov = scaled_cov / (std_devs[:, np.newaxis] * std_devs[np.newaxis, :])
-    
-    # Create heatmap with better color scaling
-    heatmap = sns.heatmap(scaled_cov, 
-                         cmap='RdYlBu_r',
-                         center=0,
-                         vmin=-1,
-                         vmax=1,
-                         square=True,
-                         xticklabels=False,
-                         yticklabels=False,
-                         cbar_kws={'label': 'Correlation'})
-    
-    plt.title(f"{title}\n(Correlation Matrix View)")
-    plt.tight_layout()
-    plt.savefig('covariance_matrix.png', dpi=300, bbox_inches='tight')
-    plt.close()
 
 def plot_asset_allocation(weights, title="Asset Allocation"):
     """
@@ -320,7 +272,15 @@ def plot_asset_allocation(weights, title="Asset Allocation"):
              bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
     
     plt.tight_layout()
-    plt.savefig('asset_allocation.png', dpi=300, bbox_inches='tight')
+    
+    # Extract year from title if available
+    if "Dec" in title:
+        year = title.split("Dec")[1].strip().strip(")")
+        filename = f'asset_allocation_{year}.png'
+    else:
+        filename = 'asset_allocation.png'
+    
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.close()
 
 if __name__ == "__main__":
@@ -329,6 +289,14 @@ if __name__ == "__main__":
     returns_file = os.path.join(base_dir, "..", "Data", "Simple_Returns.xlsx")
     
     if os.path.exists(returns_file):
+        # Clean up old plot files
+        for file in os.listdir('.'):
+            if file.startswith(('asset_allocation_', 'portfolio_returns')):
+                try:
+                    os.remove(file)
+                except Exception as e:
+                    print(f"Error removing {file}: {str(e)}")
+        
         returns_df = pd.read_excel(returns_file)
         print("Returns data shape:", returns_df.shape)
         
