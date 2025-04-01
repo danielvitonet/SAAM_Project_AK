@@ -232,6 +232,20 @@ def run_portfolio_optimization(returns_df):
     # Compute final metrics
     metrics = compute_portfolio_metrics(ex_post_returns.dropna(), rf_rates[ex_post_returns.index])
     
+    # Print monthly returns
+    print("\nMonthly Portfolio Returns:")
+    print("-------------------------")
+    formatted_returns = pd.DataFrame(ex_post_returns, columns=['Return'])
+    formatted_returns.index = pd.to_datetime(formatted_returns.index)
+    formatted_returns = formatted_returns.loc['2014-01':'2024-12']
+    
+    # Group by year and month for better readability
+    by_month = formatted_returns.groupby([formatted_returns.index.year, formatted_returns.index.month])
+    
+    for (year, month), returns in by_month:
+        month_name = pd.Timestamp(year=year, month=month, day=1).strftime('%b')
+        print(f"{month_name} {year}: {returns['Return'].iloc[0]:.2%}")
+    
     return metrics, ex_post_returns
 
 def plot_asset_allocation(weights, title="Asset Allocation"):

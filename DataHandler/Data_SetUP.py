@@ -258,45 +258,84 @@ def calculate_simple_returns(filtered_file_path, init_start="2004-01-01", init_e
     
     return returns_df, init_returns_df
 
+def filter_companies_with_emissions_data(scope1_file, scope2_file, european_companies):
+    """
+    Filters companies to include only those that have both Scope 1 and 2 emissions data.
+    Returns a dictionary with the same structure as european_companies but only for companies
+    with complete emissions data.
+    """
+    # Load emissions data
+    scope1_df = Load(scope1_file)
+    scope2_df = Load(scope2_file)
+    
+    # Get companies with non-null emissions data
+    scope1_companies = scope1_df[scope1_df.iloc[:, 2:].notna().any(axis=1)]['ISIN'].tolist()
+    scope2_companies = scope2_df[scope2_df.iloc[:, 2:].notna().any(axis=1)]['ISIN'].tolist()
+    
+    # Find intersection of companies with both types of emissions data
+    companies_with_emissions = list(set(scope1_companies) & set(scope2_companies))
+    
+    # Filter european_companies dictionary to include only companies with emissions data
+    filtered_companies = {
+        "ISIN": [],
+        "Name": [],
+        "Country": [],
+        "Region": []
+    }
+    
+    for i, isin in enumerate(european_companies["ISIN"]):
+        if isin in companies_with_emissions:
+            filtered_companies["ISIN"].append(isin)
+            filtered_companies["Name"].append(european_companies["Name"][i])
+            filtered_companies["Country"].append(european_companies["Country"][i])
+            filtered_companies["Region"].append(european_companies["Region"][i])
+    
+    return filtered_companies
 
 def Initializer(static_file="Data/Static.xlsx",   
                 original_data_folder="Data/Original Data", 
                 filtered_data_folder="Data/Filtered Data", 
                 produce_visuals=False):
     """
-    Ensures that filtered datasets are created (if needed) and then loads them.
-    It runs summary statistics on the filtered datasets using Data_Analyzer.
-    All required files (DS_MV_T_USD_M.xlsx, DS_MV_T_USD_Y.xlsx, DS_REV_USD_Y.xlsx, 
-    DS_RI_T_USD_M.xlsx, DS_RI_T_USD_Y.xlsx, Scope_1.xlsx, Scope_2.xlsx) are automatically processed.
-    Additionally, it calculates simple returns from the filtered DS_RI_T_USD_M.xlsx file.
+    Main initialization function that:
+    1. Extracts European companies from the static file
+    2. Filters companies to include only those with Scope 1 and 2 emissions data
+    3. Filters all datasets to include only these companies
+    4. Calculates simple returns
+    5. Returns a dictionary containing all filtered datasets and returns
     """
-    # Load static data and extract European companies.
+    # Extract European companies
     european_companies = extract_european_companies_dict(static_file)
     
-    # Filter datasets if needed.
-    filter_all_datasets(original_data_folder, filtered_data_folder, european_companies)
+    # Filter for companies with emissions data
+    scope1_file = os.path.join(original_data_folder, "Scope_1.xlsx")
+    scope2_file = os.path.join(original_data_folder, "Scope_2.xlsx")
+    filtered_companies = filter_companies_with_emissions_data(scope1_file, scope2_file, european_companies)
     
-    # Load and store filtered datasets from the Filtered Data folder.
+    print(f"\nTotal European companies: {len(european_companies['ISIN'])}")
+    print(f"Companies with Scope 1 and 2 data: {len(filtered_companies['ISIN'])}")
+    
+    # Filter all datasets using the companies with emissions data
+    filter_all_datasets(original_data_folder, filtered_data_folder, filtered_companies)
+    
+    # Calculate simple returns
+    filtered_file_path = os.path.join(filtered_data_folder, "DS_RI_T_USD_M.xlsx")
+    returns_df, init_returns_df = calculate_simple_returns(filtered_file_path)
+    
+    # Load all filtered datasets
     filtered_datasets = {}
     for file in os.listdir(filtered_data_folder):
-        if file.endswith(".xlsx") or file.endswith(".csv"):
+        if file.endswith(('.xlsx', '.csv')):
             file_path = os.path.join(filtered_data_folder, file)
             filtered_datasets[file] = Load(file_path)
     
-    # Run summary statistics on each filtered dataset.
-    for file_name, dataset in filtered_datasets.items():
-        print(f"\nSummary statistics for {file_name}:")
-        Data_Analyzer(dataset, produce_visuals=produce_visuals)
+    # Add returns datasets to the dictionary
+    filtered_datasets["Simple_Returns.xlsx"] = returns_df
+    filtered_datasets["Initialization_Returns.xlsx"] = init_returns_df
     
-    # Calculate simple returns from DS_RI_T_USD_M.xlsx.
-    returns_file_path = os.path.join(filtered_data_folder, "DS_RI_T_USD_M.xlsx")
-    if os.path.exists(returns_file_path):
-        print("\nCalculating simple returns for DS_RI_T_USD_M.xlsx...")
-        returns_df, init_returns_df = calculate_simple_returns(returns_file_path)
-        # Optionally, add these return DataFrames to the dictionary.
-        filtered_datasets["Simple_Returns.xlsx"] = returns_df
-        filtered_datasets["Initialization_Returns.xlsx"] = init_returns_df
-    else:
-        print("Filtered DS_RI_T_USD_M.xlsx not found in the Filtered Data folder.")
+    # Analyze each dataset
+    for file, dataset in filtered_datasets.items():
+        print(f"\nAnalyzing {file}:")
+        Data_Analyzer(dataset, produce_visuals)
     
     return filtered_datasets

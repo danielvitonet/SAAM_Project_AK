@@ -1,4 +1,3 @@
-
 ###############################################################################
 # SUSTAINABILITY AWARE ASSET MANAGEMENT
 # =============================================================================
@@ -32,7 +31,7 @@ print("Current working directory:", os.getcwd())
 
 # Import the necessary functions from the DataHandler package
 from DataHandler.Data_SetUP import Initializer
-from DataHandler.Standard_Asset_Allocation import run_optimization_routine
+from DataHandler.Standard_Asset_Allocation import run_portfolio_optimization
 
 def main():
     
@@ -60,37 +59,21 @@ def main():
     # Retrieve the simple returns DataFrame.
     # It was added to the dictionary with key "Simple_Returns.xlsx".
     
-    #if "Simple_Returns.xlsx" in filtered_datasets:
-    #    returns_df = filtered_datasets["Simple_Returns.xlsx"]
-    #else:
-        # Fallback: load from the Data folder.
-    #    returns_df = pd.read_excel(os.path.join("Data", "Simple_Returns.xlsx"))
-    
     returns_df = filtered_datasets.get("Simple_Returns.xlsx")
     if returns_df is None:
         returns_df = pd.read_excel(os.path.join("Data", "Simple_Returns.xlsx"))
-
     
-    # Define rebalancing dates (for example, the last day of each year from 2013 to 2023).
-    rebalancing_dates = ["2013-12-31", "2014-12-31", "2015-12-31", "2016-12-31", 
-                         "2017-12-31", "2018-12-31", "2019-12-31", "2020-12-31", 
-                         "2021-12-31", "2022-12-31", "2023-12-31"]
+    # Run the portfolio optimization
+    metrics, ex_post_returns = run_portfolio_optimization(returns_df)
     
-    # Run the full optimization routine:
-    #   It computes optimal weights using a rolling window, calculates ex-post returns for the following 12 months,
-    #   and then computes key performance metrics for each rebalancing date.
-    results = run_optimization_routine(returns_df, rebalancing_dates, estimation_window=120, horizon=12)
-    
-    # Output the optimization results.
-    for r_date, res in results.items():
-        print(f"\nRebalancing Date: {r_date}")
-        print("Optimal Weights:")
-        print(res["weights"])
-        print("Ex-Post Portfolio Returns:")
-        print(res["ex_post_returns"])
-        print("Performance Metrics:")
-        for metric, value in res["performance_metrics"].items():
-            print(f"  {metric}: {value}")
+    # Print results
+    print("\nPortfolio Characteristics (P(mv)oos):")
+    print(f"Annualized Average Return (μ̄p): {metrics['annualized_return']:.4f}")
+    print(f"Annualized Volatility (σp): {metrics['annualized_volatility']:.4f}")
+    print(f"Average Risk-free Rate: {metrics['avg_rf_rate']:.4f}")
+    print(f"Sharpe Ratio (SRp): {metrics['sharpe_ratio']:.4f}")
+    print(f"Minimum Return: {metrics['min_return']:.4f}")
+    print(f"Maximum Return: {metrics['max_return']:.4f}")
     
     print("\nOptimization routine complete. Portfolio characteristics have been computed over the sample.")
 
