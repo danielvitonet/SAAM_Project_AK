@@ -24,6 +24,7 @@ import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import cvxpy as cp
 
 # Set the working directory to the directory where main.py is located.
 base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -34,35 +35,11 @@ print("Current working directory:", os.getcwd())
 # Import the necessary functions from the DataHandler package
 from DataHandler.Data_SetUP import Initializer
 from DataHandler.Standard_Asset_Allocation import run_portfolio_optimization
-# Import the new functions for value-weighted portfolio
 from DataHandler.Value_Weighted_Portfolio import calculate_value_weighted_portfolio, plot_cumulative_returns, \
     compare_portfolio_performance
 
-
-def clean_date_columns(df):
-    """Helper function to ensure dates in the columns are in YYYY-MM-DD format"""
-    meta_cols = list(df.columns[:2])  # Keep first two columns as metadata
-    date_cols = list(df.columns[2:])  # Get the date columns
-
-    # Try to convert date columns to standard format
-    formatted_date_cols = []
-    for col in date_cols:
-        try:
-            # If it's already a date object, format it as string
-            if isinstance(col, pd.Timestamp):
-                formatted_date_cols.append(col.strftime('%Y-%m-%d'))
-            else:
-                # If it's a string, try to parse and format
-                dt = pd.to_datetime(col)
-                formatted_date_cols.append(dt.strftime('%Y-%m-%d'))
-        except:
-            # If conversion fails, keep as is
-            formatted_date_cols.append(col)
-
-    # Create new DataFrame with formatted column names
-    new_df = df.copy()
-    new_df.columns = meta_cols + formatted_date_cols
-    return new_df
+# Import CarbonAwarePortfolio class
+from DataHandler.CarbonAwarePortfolio import CarbonAwarePortfolio
 
 
 def main():
@@ -119,8 +96,12 @@ def main():
         print("Market capitalization data loaded. Shape:", market_cap_df.shape)
 
         # Clean and standardize column names (especially dates)
-        market_cap_df = clean_date_columns(market_cap_df)
-        returns_df = clean_date_columns(returns_df)
+        market_cap_df.columns = list(market_cap_df.columns[:2]) + [
+            str(col) for col in market_cap_df.columns[2:]
+        ]
+        returns_df.columns = list(returns_df.columns[:2]) + [
+            str(col) for col in returns_df.columns[2:]
+        ]
 
         # Print some sample column names to verify formats
         print("\nSample market cap columns:", market_cap_df.columns[2:10])
@@ -190,17 +171,187 @@ def main():
         print(f"Market capitalization file not found: {market_cap_file}")
         print("Cannot complete point 1.2 without market capitalization data.")
 
+    ###############################################################################
+    # PART 2: Asset Allocation with a Carbon Emissions Reduction
+    # Adding a carbon footprint constraint to portfolio optimization.
+    ###############################################################################
+
+    print("\n" + "=" * 80)
+    print("PART 2: Asset Allocation with a Carbon Emissions Reduction")
+    print("=" * 80)
+
+    # Load necessary data for carbon-aware portfolio construction
+    data_dir = filtered_data_folder
+    market_cap_annual_file = os.path.join(data_dir, "DS_MV_T_USD_Y.xlsx")
+    scope1_file = os.path.join(data_dir, "Scope_1.xlsx")
+    scope2_file = os.path.join(data_dir, "Scope_2.xlsx")
+    revenue_file = os.path.join(data_dir, "DS_REV_USD_Y.xlsx")
+
+    # Check if all required files exist
+    required_files = [market_cap_annual_file, scope1_file, scope2_file, revenue_file]
+    all_files_exist = all(os.path.exists(file) for file in required_files)
+
+    if all_files_exist:
+        # Load data
+        print("Loading data for carbon-aware portfolio analysis...")
+        market_cap_annual_df = pd.read_excel(market_cap_annual_file)
+        scope1_df = pd.read_excel(scope1_file)
+        scope2_df = pd.read_excel(scope2_file)
+        revenue_df = pd.read_excel(revenue_file)
+
+        # Create CarbonAwarePortfolio instance
+        carbon_portfolio = CarbonAwarePortfolio(
+            market_cap_annual_df=market_cap_annual_df,
+            returns_df=returns_df,
+            scope1_df=scope1_df,
+            scope2_df=scope2_df,
+            revenue_df=revenue_df
+        )
+
+        # ------------------------
+        # PART 2.1
+        # ------------------------
+        print("\n" + "-" * 80)
+        print("PART 2.1: Computing carbon intensity and carbon footprint")
+        print("-" * 80)
+
+        # The carbon intensity computation is done in the CarbonAwarePortfolio initialization
+        # Now compute portfolio weights and carbon footprints
+        carbon_portfolio.compute_all_portfolio_weights(
+            window_size=120, start_year=2013, end_year=2023
+        )
+
+        # Print carbon footprints of the minimum variance portfolio
+        print("\nCarbon Footprints of the Minimum Variance Portfolio (P(mv)oos):")
+        for year in range(2014, 2024):
+            if f"mv_{year}" in carbon_portfolio.carbon_footprints:
+                waci, cf = carbon_portfolio.carbon_footprints[f"mv_{year}"]
+                print(f"Year {year}: WACI = {waci:.2f}, Carbon Footprint = {cf:.2f}")
+
+        # ------------------------
+        # PART 2.2
+        # ------------------------
+        print("\n" + "-" * 80)
+        print("PART 2.2: Constructing portfolio with 50% reduction in carbon footprint vs. minimum variance")
+        print("-" * 80)
+
+        # Print carbon footprints of the carbon-constrained minimum variance portfolio
+        print("\nCarbon Footprints of the Carbon-Constrained Minimum Variance Portfolio (P(mv)oos(0.5)):")
+        for year in range(2014, 2024):
+            if f"mvc_{year}" in carbon_portfolio.carbon_footprints:
+                waci, cf = carbon_portfolio.carbon_footprints[f"mvc_{year}"]
+                print(f"Year {year}: WACI = {waci:.2f}, Carbon Footprint = {cf:.2f}")
+
+                # Calculate reduction percentage if both footprints are available
+                if f"mv_{year}" in carbon_portfolio.carbon_footprints:
+                    _, mv_cf = carbon_portfolio.carbon_footprints[f"mv_{year}"]
+                    reduction = 100 * (1 - cf / mv_cf) if mv_cf > 0 else 0
+                    print(f"          Carbon Footprint Reduction: {reduction:.2f}%")
+
+        # ------------------------
+        # PART 2.3
+        # ------------------------
+        print("\n" + "-" * 80)
+        print("PART 2.3: Constructing portfolio with 50% reduction in carbon footprint vs. value-weighted")
+        print("-" * 80)
+
+        # Print carbon footprints of the carbon-constrained value-weighted portfolio
+        print("\nCarbon Footprints of the Carbon-Constrained Value-Weighted Portfolio (P(vw)oos(0.5)):")
+        for year in range(2014, 2024):
+            if f"vwc_{year}" in carbon_portfolio.carbon_footprints:
+                waci, cf = carbon_portfolio.carbon_footprints[f"vwc_{year}"]
+                print(f"Year {year}: WACI = {waci:.2f}, Carbon Footprint = {cf:.2f}")
+
+                # Calculate reduction percentage if both footprints are available
+                if f"vw_{year}" in carbon_portfolio.carbon_footprints:
+                    _, vw_cf = carbon_portfolio.carbon_footprints[f"vw_{year}"]
+                    reduction = 100 * (1 - cf / vw_cf) if vw_cf > 0 else 0
+                    print(f"          Carbon Footprint Reduction: {reduction:.2f}%")
+
+        # ------------------------
+        # PART 2.4
+        # ------------------------
+        print("\n" + "-" * 80)
+        print("PART 2.4: Analyzing trade-off between financial performance and carbon footprint reduction")
+        print("-" * 80)
+
+        # Plot carbon footprints over time
+        carbon_portfolio.plot_carbon_footprints(start_year=2014, end_year=2023)
+        print("\nCarbon footprints plot generated: carbon_footprints.png")
+
+        # Compare performance of MV and MV with carbon constraint
+        print("\nComparing financial performance of minimum variance portfolios...")
+        # This will generate cumulative_returns_mv_comparison.png
+
+        # Compare performance of VW and VW with carbon constraint
+        print("\nComparing financial performance of value-weighted portfolios...")
+        # This will generate cumulative_returns_vw_comparison.png
+
+        ###############################################################################
+        # PART 3: Allocation with a Net Zero Objective
+        # Implementing a decreasing carbon footprint over time.
+        ###############################################################################
+
+        print("\n" + "=" * 80)
+        print("PART 3: Allocation with a Net Zero Objective")
+        print("=" * 80)
+
+        # ------------------------
+        # PART 3.1
+        # ------------------------
+        print("\n" + "-" * 80)
+        print("PART 3.1: Implementing a decarbonization strategy with 10% reduction per year")
+        print("-" * 80)
+
+        # Print carbon footprints of the net zero portfolio
+        print("\nCarbon Footprints of the Net Zero Portfolio (P(vw)oos(NZ)):")
+        for year in range(2014, 2024):
+            if f"nz_{year}" in carbon_portfolio.carbon_footprints:
+                waci, cf = carbon_portfolio.carbon_footprints[f"nz_{year}"]
+                print(f"Year {year}: WACI = {waci:.2f}, Carbon Footprint = {cf:.2f}")
+
+                # Calculate reduction percentage from base year (2013)
+                if f"vw_2013" in carbon_portfolio.carbon_footprints:
+                    _, base_cf = carbon_portfolio.carbon_footprints[f"vw_2013"]
+                    cumulative_reduction = 100 * (1 - cf / base_cf) if base_cf > 0 else 0
+                    print(f"          Cumulative Reduction from 2013: {cumulative_reduction:.2f}%")
+
+                    # Calculate target reduction
+                    target_reduction = 100 * (1 - (0.9) ** (year - 2013))
+                    print(f"          Target Reduction: {target_reduction:.2f}%")
+
+        # ------------------------
+        # PART 3.2
+        # ------------------------
+        print("\n" + "-" * 80)
+        print("PART 3.2: Comparing performance of value-weighted, carbon-constrained, and net zero portfolios")
+        print("-" * 80)
+
+        # Calculate and print performance metrics for all portfolios
+        metrics_df = carbon_portfolio.compare_portfolio_performance(
+            start_year=2014, end_year=2023
+        )
+
+        print("\nPortfolio Performance Metrics:")
+        print(metrics_df)
+
+        # Save metrics to CSV
+        metrics_df.to_csv(os.path.join(results_dir, "carbon_portfolio_metrics.csv"))
+
+        print("\nPerformance comparison plots generated:")
+        print("- cumulative_returns_all.png: All portfolio strategies")
+        print("- cumulative_returns_mv_comparison.png: MV vs. MV Carbon-Constrained")
+        print("- cumulative_returns_vw_comparison.png: VW vs. VW Carbon-Constrained vs. Net Zero")
+        print("- portfolio_metrics_comparison.png: Key performance metrics comparison")
+
+        print("\nCarbon-aware portfolio analysis complete.")
+        print("Results and visualizations saved to the Data/Results directory.")
+    else:
+        missing_files = [file for file in required_files if not os.path.exists(file)]
+        print(f"Cannot complete Part II and III. Missing files: {missing_files}")
+
     print("\nOptimization routine complete. Portfolio characteristics have been computed over the sample.")
 
 
 if __name__ == "__main__":
     main()
-
-###############################################################################
-# PART 2: Impact of the portfolio on climate
-# Asset Allocation with a Carbon Emissions Reduction.
-# Asset Allocation with a Net Zero Objective.
-###############################################################################
-
-
-# Main file
