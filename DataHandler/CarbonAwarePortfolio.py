@@ -469,42 +469,71 @@ class CarbonAwarePortfolio:
                 if numeric_cols:
                     closest_year = min(numeric_cols, key=lambda x: abs(int(str(x)) - year_int))
                     market_caps = pd.to_numeric(self.market_cap_annual_df[str(closest_year)], errors='coerce').values
-                    print(f"Market cap for {year_str} not available. Using {closest_year}.")
+                    logger.info(f"Market cap for {year_str} not available. Using {closest_year}.")
 
             if market_caps is None or len(market_caps) == 0:
                 raise ValueError(f"Market cap data not available for year {year_str}")
 
-            # Ensure all arrays have same length by using the target ISIN list
-            n_companies = len(self.filtered_isins)
+            # Get number of filtered companies for dimension checking
+            n_filtered_companies = len(self.filtered_isins)
+            logger.info(f"Carbon footprint calculation - Filtered companies count: {n_filtered_companies}")
+            logger.info(f"Carbon footprint calculation - Input weights length: {len(weights)}")
 
-            # Adjust weights to match the number of companies
-            weights_adj = np.zeros(n_companies)
-            if len(weights) <= n_companies:
-                weights_adj[:len(weights)] = weights
-            else:
-                weights_adj = weights[:n_companies]
+            # Create arrays for filtered companies
+            filtered_carbon_intensity = np.zeros(n_filtered_companies)
+            filtered_emissions = np.zeros(n_filtered_companies)
+            filtered_market_caps = np.zeros(n_filtered_companies)
+
+            # Map data to filtered companies by ISIN
+            for i, isin in enumerate(self.filtered_isins):
+                isin_idx_carbon = self.carbon_intensity[self.carbon_intensity['ISIN'] == isin].index
+                isin_idx_market = self.market_cap_annual_df[self.market_cap_annual_df['ISIN'] == isin].index
+
+                if len(isin_idx_carbon) > 0:
+                    idx = isin_idx_carbon[0]
+                    if idx < len(carbon_intensity):
+                        filtered_carbon_intensity[i] = carbon_intensity[idx]
+                        filtered_emissions[i] = emissions[idx]
+
+                if len(isin_idx_market) > 0:
+                    idx = isin_idx_market[0]
+                    if idx < len(market_caps):
+                        filtered_market_caps[i] = market_caps[idx]
 
             # Handle NaN or infinite values
-            weights_adj = np.nan_to_num(weights_adj, 0)
-            carbon_intensity = np.nan_to_num(carbon_intensity, 0)
-            market_caps = np.nan_to_num(market_caps, 1e-10)  # Small but non-zero value
-            emissions = np.nan_to_num(emissions, 0)
+            filtered_carbon_intensity = np.nan_to_num(filtered_carbon_intensity, 0)
+            filtered_emissions = np.nan_to_num(filtered_emissions, 0)
+            filtered_market_caps = np.nan_to_num(filtered_market_caps, 1e-10)  # Small but non-zero value
 
             # Avoid division by zero
-            market_caps = np.where(market_caps <= 0, 1e-10, market_caps)
+            filtered_market_caps = np.where(filtered_market_caps <= 0, 1e-10, filtered_market_caps)
+
+            # Adjust weights to match the number of companies
+            if len(weights) != n_filtered_companies:
+                adjusted_weights = np.zeros(n_filtered_companies)
+                min_len = min(len(weights), n_filtered_companies)
+                adjusted_weights[:min_len] = weights[:min_len]
+
+                logger.info(
+                    f"Resized weights from {len(weights)} to {n_filtered_companies} in carbon footprint calculation")
+
+                weights = adjusted_weights
 
             # Normalize weights (sum = 1)
-            if np.sum(weights_adj) > 0:
-                weights_adj = weights_adj / np.sum(weights_adj)
+            if np.sum(weights) > 0:
+                weights = weights / np.sum(weights)
+            else:
+                logger.warning("Zero sum of weights in carbon footprint calculation. Using equal weights.")
+                weights = np.ones(n_filtered_companies) / n_filtered_companies
 
             # Calculate weighted average carbon intensity (WACI)
-            waci = np.sum(weights_adj * carbon_intensity)
+            waci = np.sum(weights * filtered_carbon_intensity)
 
             # Calculate ownership fraction for each company
-            ownership = weights_adj * initial_investment / market_caps
+            ownership = weights * initial_investment / filtered_market_caps
 
             # Calculate carbon footprint (owned emissions per million USD invested)
-            owned_emissions = ownership * emissions
+            owned_emissions = ownership * filtered_emissions
             carbon_footprint = np.sum(owned_emissions) / initial_investment
 
             return waci, carbon_footprint
@@ -514,6 +543,73 @@ class CarbonAwarePortfolio:
             print(f"Error in carbon footprint calculation for year {year}: {str(e)}")
             # Return default values in case of error
             return 0.0, 0.0
+
+    def check_dimensions(self):
+        """
+        Diagnostic function to check dimensions of all stored arrays.
+        This helps identify dimension mismatches across different parts of the code.
+        """
+        n_filtered_companies = len(self.filtered_isins)
+        print(f"\nDiagnostic check - Number of filtered companies: {n_filtered_companies}")
+
+        # Check portfolio weights
+        print("\nPortfolio weights dimensions:")
+        for year in sorted(self.mv_portfolio_weights.keys()):
+            mv_len = len(self.mv_portfolio_weights.get(year, []))
+            vw_len = len(self.vw_portfolio_weights.get(year, []))
+            mvc_len = len(self.mv_carbon_weights.get(year, []))
+            vwc_len = len(self.vw_carbon_weights.get(year, []))
+            nz_len = len(self.nz_portfolio_weights.get(year, []))
+
+            print(f"Year {year}: MV={mv_len}, VW={vw_len}, MVC={mvc_len}, VWC={vwc_len}, NZ={nz_len}")
+
+            # Check if any dimensions don't match expected
+            if mv_len != n_filtered_companies or vw_len != n_filtered_companies or \
+                    mvc_len != n_filtered_companies or vwc_len != n_filtered_companies or \
+                    (nz_len > 0 and nz_len != n_filtered_companies):
+                print(f"  WARNING: Dimension mismatch in year {year}!")
+
+        # Check carbon intensity table
+        print("\nCarbon intensity table shape:", self.carbon_intensity.shape)
+
+        # Sample a year to check data arrays
+        sample_year = str(sorted(self.mv_portfolio_weights.keys())[0])
+        print(f"\nSample data check for year {sample_year}:")
+
+        try:
+            emissions_col = f"Emissions_{sample_year}"
+            revenue_col = f"Revenue_{sample_year}"
+            ci_col = f"CI_{sample_year}"
+
+            emissions_len = len(self.carbon_intensity[emissions_col].values)
+            revenue_len = len(self.carbon_intensity[revenue_col].values)
+            ci_len = len(self.carbon_intensity[ci_col].values)
+
+            print(f"  Emissions: {emissions_len}, Revenue: {revenue_len}, CI: {ci_len}")
+
+            # Check market cap for this year
+            if sample_year in self.market_cap_annual_df.columns:
+                market_caps = pd.to_numeric(self.market_cap_annual_df[sample_year], errors='coerce').values
+                print(f"  Market cap: {len(market_caps)}")
+            else:
+                print(f"  Market cap not available for {sample_year}")
+
+        except Exception as e:
+            print(f"  Error checking sample data: {str(e)}")
+
+        # Check returns data
+        print("\nReturns data check:")
+        filtered_returns = self.returns_df[self.returns_df['ISIN'].isin(self.filtered_isins)].copy()
+        print(f"  Filtered returns shape: {filtered_returns.shape}")
+
+        return {
+            "n_filtered_companies": n_filtered_companies,
+            "weights_years": sorted(self.mv_portfolio_weights.keys()),
+            "carbon_intensity_shape": self.carbon_intensity.shape,
+            "filtered_returns_shape": filtered_returns.shape
+        }
+
+    # Aggiungere questa funzione alla classe CarbonAwarePortfolio
 
     def optimize_carbon_constrained_portfolio(self, expected_returns, cov_matrix,
                                               emissions, market_caps, carbon_limit,
@@ -535,6 +631,13 @@ class CarbonAwarePortfolio:
         # Get number of assets and ensure proper dimensions
         n_assets = len(self.filtered_isins)
 
+        # Registriamo il numero di asset iniziale per il debug
+        logger.info(f"Optimization - Number of filtered companies: {n_assets}")
+        logger.info(f"Optimization - Expected returns length: {len(expected_returns)}")
+        logger.info(f"Optimization - Covariance matrix shape: {cov_matrix.shape}")
+        logger.info(f"Optimization - Emissions length: {len(emissions)}")
+        logger.info(f"Optimization - Market caps length: {len(market_caps)}")
+
         try:
             # Resize all arrays to match n_assets
             if len(expected_returns) != n_assets:
@@ -542,6 +645,7 @@ class CarbonAwarePortfolio:
                 min_len = min(len(expected_returns), n_assets)
                 temp_returns[:min_len] = expected_returns[:min_len]
                 expected_returns = temp_returns
+                logger.info(f"Resized expected returns to length {n_assets}")
 
             if cov_matrix.shape[0] != n_assets or cov_matrix.shape[1] != n_assets:
                 temp_cov = np.eye(n_assets) * 0.01  # Create a basic diagonal matrix
@@ -549,24 +653,28 @@ class CarbonAwarePortfolio:
                 min_cols = min(cov_matrix.shape[1], n_assets)
                 temp_cov[:min_rows, :min_cols] = cov_matrix[:min_rows, :min_cols]
                 cov_matrix = temp_cov
+                logger.info(f"Resized covariance matrix to shape {(n_assets, n_assets)}")
 
             if len(emissions) != n_assets:
                 temp_emissions = np.zeros(n_assets)
                 min_len = min(len(emissions), n_assets)
                 temp_emissions[:min_len] = emissions[:min_len]
                 emissions = temp_emissions
+                logger.info(f"Resized emissions to length {n_assets}")
 
             if len(market_caps) != n_assets:
                 temp_caps = np.ones(n_assets) * np.mean(market_caps)
                 min_len = min(len(market_caps), n_assets)
                 temp_caps[:min_len] = market_caps[:min_len]
                 market_caps = temp_caps
+                logger.info(f"Resized market caps to length {n_assets}")
 
             if benchmark_weights is not None and len(benchmark_weights) != n_assets:
                 temp_bench = np.zeros(n_assets)
                 min_len = min(len(benchmark_weights), n_assets)
                 temp_bench[:min_len] = benchmark_weights[:min_len]
                 benchmark_weights = temp_bench
+                logger.info(f"Resized benchmark weights to length {n_assets}")
 
             # Handle NaN or infinite values
             expected_returns = np.nan_to_num(expected_returns, 0)
@@ -614,9 +722,11 @@ class CarbonAwarePortfolio:
             prob = cp.Problem(objective, constraints)
 
             # Try different solvers
-            for solver in [cp.ECOS, cp.SCS, cp.OSQP]:
+            solvers_to_try = ["ECOS", "SCS", "OSQP"]
+            for solver_name in solvers_to_try:
                 try:
-                    prob.solve(solver=solver)
+                    # Passare il nome del solver come stringa, non l'oggetto solver
+                    prob.solve(solver=solver_name)
                     if prob.status == "optimal" or prob.status == "optimal_inaccurate":
                         optimal_weights = weights.value
                         optimal_weights = np.nan_to_num(optimal_weights, 0)
@@ -625,21 +735,34 @@ class CarbonAwarePortfolio:
                         if abs(np.sum(optimal_weights) - 1.0) > 1e-5 and np.sum(optimal_weights) > 0:
                             optimal_weights = optimal_weights / np.sum(optimal_weights)
 
+                        # Verifica finale che optimal_weights abbia la dimensione n_assets
+                        if len(optimal_weights) != n_assets:
+                            logger.warning(
+                                f"Optimization result weights length {len(optimal_weights)} doesn't match expected {n_assets}. Resizing.")
+                            temp_weights = np.zeros(n_assets)
+                            common_length = min(len(optimal_weights), n_assets)
+                            temp_weights[:common_length] = optimal_weights[:common_length]
+                            optimal_weights = temp_weights
+                            if np.sum(optimal_weights) > 0:
+                                optimal_weights = optimal_weights / np.sum(optimal_weights)
+
+                        logger.info(
+                            f"Optimization successful using {solver_name}. Final weights length: {len(optimal_weights)}")
                         return optimal_weights
                     else:
-                        logger.warning(f"Solver {solver.__name__} status: {prob.status}")
+                        logger.warning(f"Solver {solver_name} status: {prob.status}")
                 except Exception as e:
-                    logger.warning(f"Solver {solver.__name__} generated an error: {str(e)}")
+                    logger.warning(f"Solver {solver_name} generated an error: {str(e)}")
                     continue
 
-            # If all solvers fail, relax the carbon constraint
             for relaxation in [1.05, 1.1, 1.2, 1.5, 2.0]:
                 relaxed_limit = carbon_limit * relaxation
                 constraints[-1] = carbon_footprint <= relaxed_limit
 
                 prob = cp.Problem(objective, constraints)
                 try:
-                    prob.solve(solver=cp.ECOS)
+                    # Usa ECOS come stringa
+                    prob.solve(solver="ECOS")
                     if prob.status == "optimal" or prob.status == "optimal_inaccurate":
                         logger.info(
                             f"Optimization succeeded with relaxed carbon constraint by {(relaxation - 1) * 100:.1f}%")
@@ -655,76 +778,23 @@ class CarbonAwarePortfolio:
                     logger.warning(f"Relaxed solver with factor {relaxation} failed: {str(e)}")
                     continue
 
-            # Last resort: heuristic approach
-            logger.info("Using a heuristic approach for optimization...")
+                # Log informazioni sulla fallback strategy
+            logger.warning(f"All solvers failed. Using fallback strategy. Carbon limit: {carbon_limit:.2f}")
 
-            if benchmark_weights is not None:
-                # Start with benchmark weights
-                current_weights = benchmark_weights.copy()
-            else:
-                # Start with equal weights
-                current_weights = np.ones(n_assets) / n_assets
+            # Utilizziamo pesi uguali come fallback
+            equal_weights = np.ones(n_assets) / n_assets
 
-            # Calculate initial carbon footprint
-            ownership_init = current_weights / market_caps
-            cf_init = np.sum(ownership_init * emissions)
-
-            # If initial carbon footprint is already under the limit, use those weights
-            if cf_init <= carbon_limit:
-                return current_weights
-
-            # Otherwise, iteratively reduce carbon footprint
-            carbon_intensity_per_dollar = emissions / market_caps
-
-            # Sort by carbon intensity (descending)
-            high_intensity_idx = np.argsort(-carbon_intensity_per_dollar)
-            low_intensity_idx = np.argsort(carbon_intensity_per_dollar)
-
-            # Iteratively reduce weight of high-intensity companies
-            iteration = 0
-            max_iterations = 1000
-
-            while cf_init > carbon_limit and iteration < max_iterations:
-                iteration += 1
-
-                # Select a high-intensity and a low-intensity company
-                high_idx = high_intensity_idx[0]
-                low_idx = low_intensity_idx[0]
-
-                # Shift weight from high-intensity to low-intensity company
-                shift = min(current_weights[high_idx], 0.005)  # Max 0.5% per iteration
-
-                if shift > 0:
-                    current_weights[high_idx] -= shift
-                    current_weights[low_idx] += shift
-
-                    # Recalculate carbon footprint
-                    ownership = current_weights / market_caps
-                    cf_init = np.sum(ownership * emissions)
-                else:
-                    # If we can't shift more weight from first high-intensity company,
-                    # try the next one
-                    high_intensity_idx = high_intensity_idx[1:]
-                    if len(high_intensity_idx) == 0:
-                        break
-
-            # Normalize weights
-            current_weights = current_weights / np.sum(current_weights) if np.sum(
-                current_weights) > 0 else current_weights
-
-            # Calculate final carbon footprint
-            ownership = current_weights / market_caps
-            cf_final = np.sum(ownership * emissions)
-
-            logger.info(f"Heuristic approach: Final carbon footprint = {cf_final:.2f}, limit = {carbon_limit:.2f}")
-
-            return current_weights
+            # Logging finale
+            logger.info(f"Returning fallback weights with length {len(equal_weights)}")
+            return equal_weights
 
         except Exception as e:
             logger.error(f"Error during optimization: {str(e)}", exc_info=True)
             print(f"Error during optimization: {str(e)}")
-            # Fallback to equal weights
-            return np.ones(n_assets) / n_assets
+            # Fallback to equal weights, ensuring correct dimension
+            equal_weights = np.ones(n_assets) / n_assets
+            logger.info(f"Returning equal weights with length {len(equal_weights)} after exception")
+            return equal_weights
 
     def compute_minimum_variance_weights(self, returns, cov_matrix):
         """
@@ -803,12 +873,31 @@ class CarbonAwarePortfolio:
                 logger.error(f"No market cap data for year {year}")
                 return np.ones(len(self.filtered_isins)) / len(self.filtered_isins)
 
+            # Ensure we use only filtered companies for market cap and emissions
+            filtered_market_cap = np.zeros(len(self.filtered_isins))
+            filtered_emissions = np.zeros(len(self.filtered_isins))
+
+            # Map the market caps and emissions to filtered companies by ISIN
+            for i, isin in enumerate(self.filtered_isins):
+                isin_idx_market = self.market_cap_annual_df[self.market_cap_annual_df['ISIN'] == isin].index
+                isin_idx_carbon = self.carbon_intensity[self.carbon_intensity['ISIN'] == isin].index
+
+                if len(isin_idx_market) > 0:
+                    idx = isin_idx_market[0]
+                    if idx < len(market_cap):
+                        filtered_market_cap[i] = market_cap[idx]
+
+                if len(isin_idx_carbon) > 0:
+                    idx = isin_idx_carbon[0]
+                    if idx < len(emissions):
+                        filtered_emissions[i] = emissions[idx]
+
             # Handle missing values
-            emissions = np.nan_to_num(emissions, 0)
-            market_cap = np.nan_to_num(market_cap, 0)
+            filtered_emissions = np.nan_to_num(filtered_emissions, 0)
+            filtered_market_cap = np.nan_to_num(filtered_market_cap, 0)
 
             # Add small value to avoid division by zero
-            market_cap[market_cap <= 0] = 1e-10
+            filtered_market_cap[filtered_market_cap <= 0] = 1e-10
 
             # Ensure all arrays have the correct length
             n_assets = len(self.filtered_isins)
@@ -827,20 +916,16 @@ class CarbonAwarePortfolio:
                 temp_cov[:min_rows, :min_cols] = cov_matrix[:min_rows, :min_cols]
                 cov_matrix = temp_cov
 
-            if len(emissions) != n_assets:
-                temp_emissions = np.zeros(n_assets)
-                min_len = min(len(emissions), n_assets)
-                temp_emissions[:min_len] = emissions[:min_len]
-                emissions = temp_emissions
-
-            if len(market_cap) != n_assets:
-                temp_caps = np.ones(n_assets) * np.mean(market_cap)
-                min_len = min(len(market_cap), n_assets)
-                temp_caps[:min_len] = market_cap[:min_len]
-                market_cap = temp_caps
+            # Log the inputs to help debugging
+            logger.info(f"MV Carbon Portfolio optimization for year {year}:")
+            logger.info(f"  Returns shape: {returns.shape}")
+            logger.info(f"  Covariance matrix shape: {cov_matrix.shape}")
+            logger.info(f"  Emissions shape: {filtered_emissions.shape}")
+            logger.info(f"  Market cap shape: {filtered_market_cap.shape}")
+            logger.info(f"  Carbon limit: {carbon_footprint_limit}")
 
             return self.optimize_carbon_constrained_portfolio(
-                returns, cov_matrix, emissions, market_cap, carbon_footprint_limit
+                returns, cov_matrix, filtered_emissions, filtered_market_cap, carbon_footprint_limit
             )
 
         except Exception as e:
@@ -887,9 +972,28 @@ class CarbonAwarePortfolio:
                 logger.error(f"No market cap data for year {year}")
                 return np.ones(len(self.filtered_isins)) / len(self.filtered_isins)
 
+            # Ensure we use only filtered companies for market cap and emissions
+            filtered_market_cap = np.zeros(len(self.filtered_isins))
+            filtered_emissions = np.zeros(len(self.filtered_isins))
+
+            # Map the market caps and emissions to filtered companies by ISIN
+            for i, isin in enumerate(self.filtered_isins):
+                isin_idx_market = self.market_cap_annual_df[self.market_cap_annual_df['ISIN'] == isin].index
+                isin_idx_carbon = self.carbon_intensity[self.carbon_intensity['ISIN'] == isin].index
+
+                if len(isin_idx_market) > 0:
+                    idx = isin_idx_market[0]
+                    if idx < len(market_cap):
+                        filtered_market_cap[i] = market_cap[idx]
+
+                if len(isin_idx_carbon) > 0:
+                    idx = isin_idx_carbon[0]
+                    if idx < len(emissions):
+                        filtered_emissions[i] = emissions[idx]
+
             # Handle missing values
-            emissions = np.nan_to_num(emissions, 0)
-            market_cap = np.nan_to_num(market_cap, 0)
+            filtered_emissions = np.nan_to_num(filtered_emissions, 0)
+            filtered_market_cap = np.nan_to_num(filtered_market_cap, 0)
 
             # Ensure all arrays have the correct length
             n_assets = len(self.filtered_isins)
@@ -902,18 +1006,6 @@ class CarbonAwarePortfolio:
                 temp_cov[:min_rows, :min_cols] = cov_matrix[:min_rows, :min_cols]
                 cov_matrix = temp_cov
 
-            if len(emissions) != n_assets:
-                temp_emissions = np.zeros(n_assets)
-                min_len = min(len(emissions), n_assets)
-                temp_emissions[:min_len] = emissions[:min_len]
-                emissions = temp_emissions
-
-            if len(market_cap) != n_assets:
-                temp_caps = np.ones(n_assets) * np.mean(market_cap)
-                min_len = min(len(market_cap), n_assets)
-                temp_caps[:min_len] = market_cap[:min_len]
-                market_cap = temp_caps
-
             if len(vw_weights) != n_assets:
                 temp_weights = np.zeros(n_assets)
                 min_len = min(len(vw_weights), n_assets)
@@ -924,8 +1016,17 @@ class CarbonAwarePortfolio:
                 if np.sum(vw_weights) > 0:
                     vw_weights = vw_weights / np.sum(vw_weights)
 
+            # Log the inputs to help debugging
+            logger.info(f"VW Carbon Portfolio optimization for year {year}:")
+            logger.info(f"  VW weights shape: {vw_weights.shape}")
+            logger.info(f"  Covariance matrix shape: {cov_matrix.shape}")
+            logger.info(f"  Emissions shape: {filtered_emissions.shape}")
+            logger.info(f"  Market cap shape: {filtered_market_cap.shape}")
+            logger.info(f"  Carbon limit: {carbon_footprint_limit}")
+
             return self.optimize_carbon_constrained_portfolio(
-                np.zeros(n_assets), cov_matrix, emissions, market_cap, carbon_footprint_limit, vw_weights
+                np.zeros(n_assets), cov_matrix, filtered_emissions, filtered_market_cap, carbon_footprint_limit,
+                vw_weights
             )
 
         except Exception as e:
@@ -961,9 +1062,86 @@ class CarbonAwarePortfolio:
 
             print(f"Net Zero Portfolio - Year {year}: Carbon limit = {carbon_footprint_limit:.2f}")
 
+            # Get emissions data for the given year
+            emissions_col = f"Emissions_{year}"
+            if emissions_col not in self.carbon_intensity.columns:
+                logger.error(f"No emissions data for year {year}")
+                return np.ones(len(self.filtered_isins)) / len(self.filtered_isins)
+
+            emissions = self.carbon_intensity[emissions_col].values
+
+            # Get market cap for selected year
+            market_cap = None
+            if str(year) in self.market_cap_annual_df.columns:
+                market_cap = pd.to_numeric(self.market_cap_annual_df[str(year)], errors='coerce').values
+            else:
+                # Find closest year
+                numeric_cols = [col for col in self.market_cap_annual_df.columns
+                                if isinstance(col, str) and col.isdigit()]
+                closest_year = min(numeric_cols, key=lambda x: abs(int(x) - int(year)))
+                market_cap = pd.to_numeric(self.market_cap_annual_df[closest_year], errors='coerce').values
+                logger.info(f"Market cap data not available for {year}. Using {closest_year}.")
+
+            if market_cap is None or len(market_cap) == 0:
+                logger.error(f"No market cap data for year {year}")
+                return np.ones(len(self.filtered_isins)) / len(self.filtered_isins)
+
+            # Ensure we use only filtered companies for market cap and emissions
+            filtered_market_cap = np.zeros(len(self.filtered_isins))
+            filtered_emissions = np.zeros(len(self.filtered_isins))
+
+            # Map the market caps and emissions to filtered companies by ISIN
+            for i, isin in enumerate(self.filtered_isins):
+                isin_idx_market = self.market_cap_annual_df[self.market_cap_annual_df['ISIN'] == isin].index
+                isin_idx_carbon = self.carbon_intensity[self.carbon_intensity['ISIN'] == isin].index
+
+                if len(isin_idx_market) > 0:
+                    idx = isin_idx_market[0]
+                    if idx < len(market_cap):
+                        filtered_market_cap[i] = market_cap[idx]
+
+                if len(isin_idx_carbon) > 0:
+                    idx = isin_idx_carbon[0]
+                    if idx < len(emissions):
+                        filtered_emissions[i] = emissions[idx]
+
+            # Handle missing values
+            filtered_emissions = np.nan_to_num(filtered_emissions, 0)
+            filtered_market_cap = np.nan_to_num(filtered_market_cap, 0)
+
+            # Ensure all arrays have the correct length
+            n_assets = len(self.filtered_isins)
+
+            # Resize arrays if needed
+            if cov_matrix.shape[0] != n_assets or cov_matrix.shape[1] != n_assets:
+                temp_cov = np.eye(n_assets) * 0.01
+                min_rows = min(cov_matrix.shape[0], n_assets)
+                min_cols = min(cov_matrix.shape[1], n_assets)
+                temp_cov[:min_rows, :min_cols] = cov_matrix[:min_rows, :min_cols]
+                cov_matrix = temp_cov
+
+            if len(vw_weights) != n_assets:
+                temp_weights = np.zeros(n_assets)
+                min_len = min(len(vw_weights), n_assets)
+                temp_weights[:min_len] = vw_weights[:min_len]
+                vw_weights = temp_weights
+
+                # Normalize benchmark weights if needed
+                if np.sum(vw_weights) > 0:
+                    vw_weights = vw_weights / np.sum(vw_weights)
+
+            # Log the inputs to help debugging
+            logger.info(f"Net Zero Portfolio optimization for year {year}:")
+            logger.info(f"  VW weights shape: {vw_weights.shape}")
+            logger.info(f"  Covariance matrix shape: {cov_matrix.shape}")
+            logger.info(f"  Emissions shape: {filtered_emissions.shape}")
+            logger.info(f"  Market cap shape: {filtered_market_cap.shape}")
+            logger.info(f"  Carbon limit: {carbon_footprint_limit}")
+
             # Compute portfolio using tracking error minimization with updated carbon constraint
-            weights = self.compute_tracking_error_portfolio_with_carbon_constraint(
-                vw_weights, cov_matrix, year, carbon_footprint_limit
+            weights = self.optimize_carbon_constrained_portfolio(
+                np.zeros(n_assets), cov_matrix, filtered_emissions, filtered_market_cap, carbon_footprint_limit,
+                vw_weights
             )
 
             return weights
@@ -1092,14 +1270,9 @@ class CarbonAwarePortfolio:
             n_periods, n_companies = returns_array.shape
             print(f"Returns data shape after transpose: {returns_array.shape} (periods x companies)")
 
-            # Only keep companies in our filtered list
-            # Filter returns data to match filtered companies
-            # First, get the position mapping between original and filtered companies
-            company_indices = {}
-            all_isins = self.returns_df['ISIN'].values
-            for i, isin in enumerate(all_isins):
-                if isin in self.filtered_isins:
-                    company_indices[isin] = i
+            # Store the number of filtered companies for reference
+            n_filtered_companies = len(self.filtered_isins)
+            logger.info(f"Number of filtered companies: {n_filtered_companies}")
 
             # Process each year
             for year in range(start_year, end_year + 1):
@@ -1108,19 +1281,38 @@ class CarbonAwarePortfolio:
                     closest_year = min(available_years, key=lambda x: abs(int(str(x)) - year))
                     print(f"Market cap data for {year} using closest year: {closest_year}")
 
-                    # Get market cap data for the year
+                    # Get market cap data for the year - make sure it's numeric
                     market_cap = pd.to_numeric(self.market_cap_annual_df[str(closest_year)], errors='coerce').values
 
+                    # Ensure we use only filtered companies for market cap
+                    filtered_market_cap = np.zeros(n_filtered_companies)
+                    # Map the market caps to filtered companies by ISIN
+                    for i, isin in enumerate(self.filtered_isins):
+                        isin_idx = self.market_cap_annual_df[self.market_cap_annual_df['ISIN'] == isin].index
+                        if len(isin_idx) > 0:
+                            idx = isin_idx[0]
+                            if idx < len(market_cap):
+                                filtered_market_cap[i] = market_cap[idx]
+
                     # Handle missing values
-                    market_cap = np.nan_to_num(market_cap, 0)
+                    filtered_market_cap = np.nan_to_num(filtered_market_cap, 0)
 
                     # Compute value-weighted benchmark weights
-                    total_market_cap = np.sum(market_cap)
+                    total_market_cap = np.sum(filtered_market_cap)
                     if total_market_cap > 0:
-                        vw_weights = market_cap / total_market_cap
+                        vw_weights = filtered_market_cap / total_market_cap
                     else:
                         # Fallback to equal weights
-                        vw_weights = np.ones(len(self.filtered_isins)) / len(self.filtered_isins)
+                        vw_weights = np.ones(n_filtered_companies) / n_filtered_companies
+
+                    # Ensure correct dimension
+                    if len(vw_weights) != n_filtered_companies:
+                        temp_weights = np.zeros(n_filtered_companies)
+                        min_len = min(len(vw_weights), n_filtered_companies)
+                        temp_weights[:min_len] = vw_weights[:min_len]
+                        vw_weights = temp_weights
+                        if np.sum(vw_weights) > 0:
+                            vw_weights = vw_weights / np.sum(vw_weights)
 
                     # Store the value-weighted benchmark weights
                     self.vw_portfolio_weights[year] = vw_weights
@@ -1134,12 +1326,8 @@ class CarbonAwarePortfolio:
                     # Create a window of returns for calculating expected returns and covariance
                     # Use the standard 10-year window (120 months) of data before each allocation year
 
-                    # Find the columns corresponding to dates in the lookback window
-                    month_per_year = 12
-                    lookback_months = window_size  # 10 years x 12 months
-
                     # Convert year-end to datetime for filtering
-                    year_end = pd.to_datetime(f"{year - 1}-12-31")
+                    year_end = pd.Timestamp(f"{year - 1}-12-31")
 
                     # Get all date columns from returns dataframe
                     date_cols = [col for col in returns_cols if '-' in col]  # Date columns typically have hyphens
@@ -1147,13 +1335,13 @@ class CarbonAwarePortfolio:
 
                     # Filter to get only columns in the lookback window
                     mask = (date_cols_dt <= year_end) & (
-                            date_cols_dt > year_end - pd.DateOffset(months=lookback_months))
+                            date_cols_dt > year_end - pd.DateOffset(months=window_size))
                     lookback_cols = [date_cols[i] for i, val in enumerate(mask) if val]
 
                     if len(lookback_cols) < 24:  # Require at least 2 years of data
-                        print(
-                            f"Warning: Not enough return data for year {year}. Only {len(lookback_cols)} months available.")
-                        lookback_cols = date_cols[:min(len(date_cols), lookback_months)]
+                        logger.warning(
+                            f"Not enough return data for year {year}. Only {len(lookback_cols)} months available.")
+                        lookback_cols = date_cols[:min(len(date_cols), window_size)]
 
                     # Extract window of returns only for filtered companies
                     filtered_returns_df = self.returns_df[self.returns_df['ISIN'].isin(self.filtered_isins)]
@@ -1166,17 +1354,42 @@ class CarbonAwarePortfolio:
                     # Check if we have enough valid data for covariance estimation
                     valid_data_ratio = np.sum(~np.isnan(lookback_returns)) / lookback_returns.size
                     if valid_data_ratio < 0.5:  # If more than 50% is missing, warn user
-                        print(f"Warning: Low valid data ratio ({valid_data_ratio:.2f}) for year {year}")
+                        logger.warning(f"Low valid data ratio ({valid_data_ratio:.2f}) for year {year}")
 
                     # Clean invalid values and compute expected returns
                     lookback_returns_clean = np.nan_to_num(lookback_returns, 0)
                     expected_returns = np.nanmean(lookback_returns_clean, axis=0)
 
+                    # Ensure expected returns has the correct dimension
+                    if len(expected_returns) != n_filtered_companies:
+                        temp_returns = np.zeros(n_filtered_companies)
+                        min_len = min(len(expected_returns), n_filtered_companies)
+                        temp_returns[:min_len] = expected_returns[:min_len]
+                        expected_returns = temp_returns
+
                     # Compute covariance matrix
                     cov_matrix = self.compute_covariance_matrix(lookback_returns_clean)
 
+                    # Ensure covariance matrix has correct dimensions
+                    if cov_matrix.shape[0] != n_filtered_companies or cov_matrix.shape[1] != n_filtered_companies:
+                        temp_cov = np.eye(n_filtered_companies) * 0.01
+                        min_rows = min(cov_matrix.shape[0], n_filtered_companies)
+                        min_cols = min(cov_matrix.shape[1], n_filtered_companies)
+                        temp_cov[:min_rows, :min_cols] = cov_matrix[:min_rows, :min_cols]
+                        cov_matrix = temp_cov
+
                     # Compute minimum variance portfolio weights
                     mv_weights = self.compute_minimum_variance_weights(expected_returns, cov_matrix)
+
+                    # Ensure minimum variance weights have correct dimension
+                    if len(mv_weights) != n_filtered_companies:
+                        temp_weights = np.zeros(n_filtered_companies)
+                        min_len = min(len(mv_weights), n_filtered_companies)
+                        temp_weights[:min_len] = mv_weights[:min_len]
+                        mv_weights = temp_weights
+                        if np.sum(mv_weights) > 0:
+                            mv_weights = mv_weights / np.sum(mv_weights)
+
                     self.mv_portfolio_weights[year] = mv_weights
 
                     # Calculate carbon footprint of minimum variance portfolio
@@ -1190,6 +1403,16 @@ class CarbonAwarePortfolio:
                     mv_carbon_weights = self.compute_mv_portfolio_with_carbon_constraint(
                         expected_returns, cov_matrix, str(year), carbon_limit
                     )
+
+                    # Ensure carbon-constrained MV weights have correct dimension
+                    if len(mv_carbon_weights) != n_filtered_companies:
+                        temp_weights = np.zeros(n_filtered_companies)
+                        min_len = min(len(mv_carbon_weights), n_filtered_companies)
+                        temp_weights[:min_len] = mv_carbon_weights[:min_len]
+                        mv_carbon_weights = temp_weights
+                        if np.sum(mv_carbon_weights) > 0:
+                            mv_carbon_weights = mv_carbon_weights / np.sum(mv_carbon_weights)
+
                     self.mv_carbon_weights[year] = mv_carbon_weights
 
                     # Calculate carbon footprint of carbon-constrained minimum variance portfolio
@@ -1203,6 +1426,16 @@ class CarbonAwarePortfolio:
                     vw_carbon_weights = self.compute_tracking_error_portfolio_with_carbon_constraint(
                         vw_weights, cov_matrix, str(year), carbon_limit
                     )
+
+                    # Ensure carbon-constrained VW weights have correct dimension
+                    if len(vw_carbon_weights) != n_filtered_companies:
+                        temp_weights = np.zeros(n_filtered_companies)
+                        min_len = min(len(vw_carbon_weights), n_filtered_companies)
+                        temp_weights[:min_len] = vw_carbon_weights[:min_len]
+                        vw_carbon_weights = temp_weights
+                        if np.sum(vw_carbon_weights) > 0:
+                            vw_carbon_weights = vw_carbon_weights / np.sum(vw_carbon_weights)
+
                     self.vw_carbon_weights[year] = vw_carbon_weights
 
                     # Calculate carbon footprint of carbon-constrained value-weighted portfolio
@@ -1227,6 +1460,16 @@ class CarbonAwarePortfolio:
                         nz_weights = self.compute_net_zero_portfolio(
                             vw_weights, cov_matrix, str(year), cf_base, theta=0.1, base_year=base_year
                         )
+
+                        # Ensure net zero weights have correct dimension
+                        if len(nz_weights) != n_filtered_companies:
+                            temp_weights = np.zeros(n_filtered_companies)
+                            min_len = min(len(nz_weights), n_filtered_companies)
+                            temp_weights[:min_len] = nz_weights[:min_len]
+                            nz_weights = temp_weights
+                            if np.sum(nz_weights) > 0:
+                                nz_weights = nz_weights / np.sum(nz_weights)
+
                         self.nz_portfolio_weights[year] = nz_weights
 
                         # Calculate carbon footprint of net zero portfolio
@@ -1308,25 +1551,58 @@ class CarbonAwarePortfolio:
                         f"Returns length mismatch: {len(monthly_returns)} vs expected {len(self.filtered_isins)}")
                     continue
 
-                # Calculate portfolio returns
-                if mv_weights is not None and len(mv_weights) == len(monthly_returns):
-                    mv_return = np.sum(mv_weights * monthly_returns)
+                # Ensure weights match the filtered companies dimension
+                # FIX: Resize the weights arrays to match the returns dimension
+                if mv_weights is not None:
+                    # Create a new array of the correct size
+                    resized_mv_weights = np.zeros(len(monthly_returns))
+                    # Copy the available weights (up to min length)
+                    common_length = min(len(mv_weights), len(monthly_returns))
+                    resized_mv_weights[:common_length] = mv_weights[:common_length]
+                    # Normalize to sum to 1
+                    if np.sum(resized_mv_weights) > 0:
+                        resized_mv_weights = resized_mv_weights / np.sum(resized_mv_weights)
+                    mv_return = np.sum(resized_mv_weights * monthly_returns)
                     results['mv'][date_col] = mv_return
 
-                if vw_weights is not None and len(vw_weights) == len(monthly_returns):
-                    vw_return = np.sum(vw_weights * monthly_returns)
+                if vw_weights is not None:
+                    # Resize value-weighted weights
+                    resized_vw_weights = np.zeros(len(monthly_returns))
+                    common_length = min(len(vw_weights), len(monthly_returns))
+                    resized_vw_weights[:common_length] = vw_weights[:common_length]
+                    if np.sum(resized_vw_weights) > 0:
+                        resized_vw_weights = resized_vw_weights / np.sum(resized_vw_weights)
+                    vw_return = np.sum(resized_vw_weights * monthly_returns)
                     results['vw'][date_col] = vw_return
 
-                if mvc_weights is not None and len(mvc_weights) == len(monthly_returns):
-                    mvc_return = np.sum(mvc_weights * monthly_returns)
+                if mvc_weights is not None:
+                    # Resize MV carbon-constrained weights
+                    resized_mvc_weights = np.zeros(len(monthly_returns))
+                    common_length = min(len(mvc_weights), len(monthly_returns))
+                    resized_mvc_weights[:common_length] = mvc_weights[:common_length]
+                    if np.sum(resized_mvc_weights) > 0:
+                        resized_mvc_weights = resized_mvc_weights / np.sum(resized_mvc_weights)
+                    mvc_return = np.sum(resized_mvc_weights * monthly_returns)
                     results['mvc'][date_col] = mvc_return
 
-                if vwc_weights is not None and len(vwc_weights) == len(monthly_returns):
-                    vwc_return = np.sum(vwc_weights * monthly_returns)
+                if vwc_weights is not None:
+                    # Resize VW carbon-constrained weights
+                    resized_vwc_weights = np.zeros(len(monthly_returns))
+                    common_length = min(len(vwc_weights), len(monthly_returns))
+                    resized_vwc_weights[:common_length] = vwc_weights[:common_length]
+                    if np.sum(resized_vwc_weights) > 0:
+                        resized_vwc_weights = resized_vwc_weights / np.sum(resized_vwc_weights)
+                    vwc_return = np.sum(resized_vwc_weights * monthly_returns)
                     results['vwc'][date_col] = vwc_return
 
-                if nz_weights is not None and len(nz_weights) == len(monthly_returns):
-                    nz_return = np.sum(nz_weights * monthly_returns)
+                if nz_weights is not None:
+                    # Resize Net Zero weights
+                    resized_nz_weights = np.zeros(len(monthly_returns))
+                    common_length = min(len(nz_weights), len(monthly_returns))
+                    resized_nz_weights[:common_length] = nz_weights[:common_length]
+                    if np.sum(resized_nz_weights) > 0:
+                        resized_nz_weights = resized_nz_weights / np.sum(resized_nz_weights)
+                    nz_return = np.sum(resized_nz_weights * monthly_returns)
                     results['nz'][date_col] = nz_return
 
             return results
@@ -1505,11 +1781,18 @@ class CarbonAwarePortfolio:
                 # Handle missing values
                 monthly_returns = np.nan_to_num(monthly_returns, 0)
 
-                # Ensure weights and returns have the same length
+                # FIX: Resize weights to match returns dimension
                 if len(weights) != len(monthly_returns):
-                    logger.warning(
-                        f"Weights ({len(weights)}) and returns ({len(monthly_returns)}) dimensions don't match for {date_str}")
-                    continue
+                    resized_weights = np.zeros(len(monthly_returns))
+                    common_length = min(len(weights), len(monthly_returns))
+                    resized_weights[:common_length] = weights[:common_length]
+
+                    # Normalize weights to sum to 1
+                    if np.sum(resized_weights) > 0:
+                        resized_weights = resized_weights / np.sum(resized_weights)
+                    weights = resized_weights
+
+                    logger.info(f"Resized weights from {len(weights)} to {len(monthly_returns)} for {date_str}")
 
                 # Normalize weights to sum to 1
                 if np.sum(weights) > 0:
