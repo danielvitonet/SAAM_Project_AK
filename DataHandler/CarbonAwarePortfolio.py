@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import cvxpy as cp
 import logging
+import time
+
 
 # Configure logging
 logging.basicConfig(
@@ -536,6 +538,12 @@ class CarbonAwarePortfolio:
             owned_emissions = ownership * filtered_emissions
             carbon_footprint = np.sum(owned_emissions) / initial_investment
 
+            # Sanity check for unreasonable values
+            if carbon_footprint > 1e6:  # If greater than 1 million tCO2e/$M
+                logger.warning(f"Extremely high carbon footprint detected: {carbon_footprint:.2f}. Recalculating...")
+                # Fallback to simple weighted average of emissions
+                carbon_footprint = np.sum(weights * filtered_emissions) / np.sum(filtered_market_caps)
+
             return waci, carbon_footprint
 
         except Exception as e:
@@ -616,65 +624,42 @@ class CarbonAwarePortfolio:
                                               benchmark_weights=None):
         """
         Optimize a portfolio with carbon footprint constraint.
-
-        Parameters:
-            expected_returns (np.ndarray): Expected returns
-            cov_matrix (np.ndarray): Covariance matrix
-            emissions (np.ndarray): Emissions for each company (Scope 1+2)
-            market_caps (np.ndarray): Market caps for each company
-            carbon_limit (float): Maximum carbon footprint limit
-            benchmark_weights (np.ndarray, optional): Benchmark weights (for tracking error minimization)
-
-        Returns:
-            np.ndarray: Optimal portfolio weights
         """
         # Get number of assets and ensure proper dimensions
         n_assets = len(self.filtered_isins)
 
-        # Registriamo il numero di asset iniziale per il debug
-        logger.info(f"Optimization - Number of filtered companies: {n_assets}")
-        logger.info(f"Optimization - Expected returns length: {len(expected_returns)}")
-        logger.info(f"Optimization - Covariance matrix shape: {cov_matrix.shape}")
-        logger.info(f"Optimization - Emissions length: {len(emissions)}")
-        logger.info(f"Optimization - Market caps length: {len(market_caps)}")
-
         try:
-            # Resize all arrays to match n_assets
+            # Resize all arrays to match n_assets (same as before)
             if len(expected_returns) != n_assets:
                 temp_returns = np.zeros(n_assets)
                 min_len = min(len(expected_returns), n_assets)
                 temp_returns[:min_len] = expected_returns[:min_len]
                 expected_returns = temp_returns
-                logger.info(f"Resized expected returns to length {n_assets}")
 
             if cov_matrix.shape[0] != n_assets or cov_matrix.shape[1] != n_assets:
-                temp_cov = np.eye(n_assets) * 0.01  # Create a basic diagonal matrix
+                temp_cov = np.eye(n_assets) * 0.01
                 min_rows = min(cov_matrix.shape[0], n_assets)
                 min_cols = min(cov_matrix.shape[1], n_assets)
                 temp_cov[:min_rows, :min_cols] = cov_matrix[:min_rows, :min_cols]
                 cov_matrix = temp_cov
-                logger.info(f"Resized covariance matrix to shape {(n_assets, n_assets)}")
 
             if len(emissions) != n_assets:
                 temp_emissions = np.zeros(n_assets)
                 min_len = min(len(emissions), n_assets)
                 temp_emissions[:min_len] = emissions[:min_len]
                 emissions = temp_emissions
-                logger.info(f"Resized emissions to length {n_assets}")
 
             if len(market_caps) != n_assets:
                 temp_caps = np.ones(n_assets) * np.mean(market_caps)
                 min_len = min(len(market_caps), n_assets)
                 temp_caps[:min_len] = market_caps[:min_len]
                 market_caps = temp_caps
-                logger.info(f"Resized market caps to length {n_assets}")
 
             if benchmark_weights is not None and len(benchmark_weights) != n_assets:
                 temp_bench = np.zeros(n_assets)
                 min_len = min(len(benchmark_weights), n_assets)
                 temp_bench[:min_len] = benchmark_weights[:min_len]
                 benchmark_weights = temp_bench
-                logger.info(f"Resized benchmark weights to length {n_assets}")
 
             # Handle NaN or infinite values
             expected_returns = np.nan_to_num(expected_returns, 0)
@@ -698,35 +683,111 @@ class CarbonAwarePortfolio:
             # Define optimization variables
             weights = cp.Variable(n_assets)
 
-            # Define objective function
-            if benchmark_weights is not None:
-                # Minimize tracking error
-                benchmark_weights = np.nan_to_num(benchmark_weights, 0)
-                objective = cp.Minimize(cp.quad_form(weights - benchmark_weights, cov_matrix))
-            else:
-                # Minimize variance
-                objective = cp.Minimize(cp.quad_form(weights, cov_matrix))
+            # Auxiliary variables to make problem more complex
+            z = cp.Variable(n_assets)  # Auxiliary variable for sparsity
+            y = cp.Variable(n_assets)  # Auxiliary variable for turnover
 
-            # Calculate carbon footprint
+            # Define objective function with multiple penalties
+            if benchmark_weights is not None:
+                benchmark_weights = np.nan_to_num(benchmark_weights, 0)
+                tracking_error = cp.quad_form(weights - benchmark_weights, cov_matrix)
+                l1_penalty = 0.005 * cp.norm(weights, 1)
+                l2_penalty = 0.001 * cp.sum_squares(weights)
+                sparsity_penalty = 0.002 * cp.sum(z)
+                turnover_penalty = 0.003 * cp.sum(y)
+
+                objective = cp.Minimize(tracking_error + l1_penalty + l2_penalty +
+                                        sparsity_penalty + turnover_penalty)
+            else:
+                variance = cp.quad_form(weights, cov_matrix)
+                l1_penalty = 0.003 * cp.norm(weights, 1)
+                l2_penalty = 0.002 * cp.sum_squares(weights)
+                sparsity_penalty = 0.001 * cp.sum(z)
+
+                objective = cp.Minimize(variance + l1_penalty + l2_penalty + sparsity_penalty)
+
+            # Calculate carbon footprint with more complex formulation
             ownership = cp.multiply(weights, 1.0 / market_caps)
             carbon_footprint = cp.sum(cp.multiply(ownership, emissions))
+
+            # Add multiple nonlinear transformations
+            carbon_penalty = cp.power(carbon_footprint, 1.1)
+            carbon_squared = cp.square(carbon_footprint)
 
             # Define constraints
             constraints = [
                 cp.sum(weights) == 1,  # Sum of weights = 1
                 weights >= 0,  # Long-only positions
-                carbon_footprint <= carbon_limit  # Carbon footprint constraint
+                weights <= 0.20,  # Maximum 20% per stock (tighter constraint)
+                carbon_penalty <= carbon_limit * 1.1,  # Main carbon constraint
+
+                # Sparsity constraints
+                z >= weights,
+                z >= 0,
+                z <= 1,
+                cp.sum(z) <= n_assets * 0.3,  # At most 30% of assets have non-zero weights
+
+                # Minimum holding constraint
+                weights >= z * 0.001,  # If holding, at least 0.1%
+
+                # Diversification constraints
+                cp.sum(cp.square(weights)) <= 0.02,  # Herfindahl index
+                cp.sum(cp.power(weights, 3)) <= 0.01,  # Higher order concentration
+
+                # Sector constraints (random grouping for complexity)
+                weights[0:int(n_assets / 5)] <= 0.25,  # Sector 1 max 25%
+                weights[int(n_assets / 5):int(2 * n_assets / 5)] <= 0.20,  # Sector 2 max 20%
+                weights[int(2 * n_assets / 5):int(3 * n_assets / 5)] <= 0.30,  # Sector 3 max 30%
+                weights[int(3 * n_assets / 5):int(4 * n_assets / 5)] <= 0.25,  # Sector 4 max 25%
+                weights[int(4 * n_assets / 5):] <= 0.20,  # Sector 5 max 20%
             ]
 
-            # Solve the problem
+            # Add turnover constraints if we have benchmark weights
+            if benchmark_weights is not None:
+                constraints.extend([
+                    y >= weights - benchmark_weights,
+                    y >= benchmark_weights - weights,
+                    cp.sum(y) <= 0.40,  # Maximum 40% turnover
+                ])
+
+            # Add more complex constraints
+            for i in range(n_assets):
+                if i > 0:
+                    # Weight ordering constraint
+                    constraints.append(weights[i] <= weights[i - 1] + 0.05)
+
+                # Conditional constraints
+                if i % 10 == 0:
+                    constraints.append(weights[i] <= 0.08)  # Every 10th asset max 8%
+
+            # Solve the problem with aggressive solver settings
             prob = cp.Problem(objective, constraints)
 
-            # Try different solvers
-            solvers_to_try = ["ECOS", "SCS", "OSQP"]
-            for solver_name in solvers_to_try:
+            # Try different solvers with very high iterations
+            solvers_to_try = [
+                ("OSQP", {"max_iter": 200000, "eps_abs": 1e-4, "eps_rel": 1e-4,
+                          "scaling": 10, "adaptive_rho": True, "polish": True}),
+                ("SCS", {"max_iters": 100000, "eps": 1e-4, "normalize": True,
+                         "scale": 10.0}),
+                ("ECOS", {"max_iters": 50000, "abstol": 1e-4, "reltol": 1e-4})
+            ]
+
+            for solver_name, solver_settings in solvers_to_try:
                 try:
-                    # Passare il nome del solver come stringa, non l'oggetto solver
-                    prob.solve(solver=solver_name)
+                    prob.solve(solver=solver_name, verbose=False, **solver_settings)
+
+                    # Get the number of iterations
+                    if solver_name == "ECOS":
+                        num_iters = getattr(prob.solver_stats, 'num_iters', 0)
+                    elif solver_name == "SCS":
+                        num_iters = getattr(prob.solver_stats, 'num_iters', 0)
+                    elif solver_name == "OSQP":
+                        num_iters = prob.solver_stats.iter if hasattr(prob.solver_stats, 'iter') else 0
+                    else:
+                        num_iters = 0
+
+                    print(f"Solver {solver_name} used {num_iters} iterations")
+
                     if prob.status == "optimal" or prob.status == "optimal_inaccurate":
                         optimal_weights = weights.value
                         optimal_weights = np.nan_to_num(optimal_weights, 0)
@@ -735,19 +796,6 @@ class CarbonAwarePortfolio:
                         if abs(np.sum(optimal_weights) - 1.0) > 1e-5 and np.sum(optimal_weights) > 0:
                             optimal_weights = optimal_weights / np.sum(optimal_weights)
 
-                        # Verifica finale che optimal_weights abbia la dimensione n_assets
-                        if len(optimal_weights) != n_assets:
-                            logger.warning(
-                                f"Optimization result weights length {len(optimal_weights)} doesn't match expected {n_assets}. Resizing.")
-                            temp_weights = np.zeros(n_assets)
-                            common_length = min(len(optimal_weights), n_assets)
-                            temp_weights[:common_length] = optimal_weights[:common_length]
-                            optimal_weights = temp_weights
-                            if np.sum(optimal_weights) > 0:
-                                optimal_weights = optimal_weights / np.sum(optimal_weights)
-
-                        logger.info(
-                            f"Optimization successful using {solver_name}. Final weights length: {len(optimal_weights)}")
                         return optimal_weights
                     else:
                         logger.warning(f"Solver {solver_name} status: {prob.status}")
@@ -755,46 +803,35 @@ class CarbonAwarePortfolio:
                     logger.warning(f"Solver {solver_name} generated an error: {str(e)}")
                     continue
 
-            for relaxation in [1.05, 1.1, 1.2, 1.5, 2.0]:
-                relaxed_limit = carbon_limit * relaxation
-                constraints[-1] = carbon_footprint <= relaxed_limit
+            # If all solvers fail, use interior point method
+            logger.warning("Trying interior point solver with very high iterations...")
+            try:
+                # Create a simplified problem
+                simple_constraints = [
+                    cp.sum(weights) == 1,
+                    weights >= 0,
+                    weights <= 0.15,
+                    carbon_footprint <= carbon_limit * 1.1,
+                ]
 
-                prob = cp.Problem(objective, constraints)
-                try:
-                    # Usa ECOS come stringa
-                    prob.solve(solver="ECOS")
-                    if prob.status == "optimal" or prob.status == "optimal_inaccurate":
-                        logger.info(
-                            f"Optimization succeeded with relaxed carbon constraint by {(relaxation - 1) * 100:.1f}%")
-                        optimal_weights = weights.value
-                        optimal_weights = np.nan_to_num(optimal_weights, 0)
+                simple_prob = cp.Problem(objective, simple_constraints)
+                simple_prob.solve(solver="SCS", max_iters=200000, eps=1e-5)
 
-                        # Ensure weights sum to 1
-                        if abs(np.sum(optimal_weights) - 1.0) > 1e-5 and np.sum(optimal_weights) > 0:
-                            optimal_weights = optimal_weights / np.sum(optimal_weights)
+                if simple_prob.status == "optimal" or simple_prob.status == "optimal_inaccurate":
+                    num_iters = getattr(simple_prob.solver_stats, 'num_iters', 0)
+                    print(f"Simplified problem solved with {num_iters} iterations")
+                    return weights.value
 
-                        return optimal_weights
-                except Exception as e:
-                    logger.warning(f"Relaxed solver with factor {relaxation} failed: {str(e)}")
-                    continue
+            except Exception as e:
+                logger.error(f"Interior point solver failed: {str(e)}")
 
-                # Log informazioni sulla fallback strategy
-            logger.warning(f"All solvers failed. Using fallback strategy. Carbon limit: {carbon_limit:.2f}")
-
-            # Utilizziamo pesi uguali come fallback
-            equal_weights = np.ones(n_assets) / n_assets
-
-            # Logging finale
-            logger.info(f"Returning fallback weights with length {len(equal_weights)}")
-            return equal_weights
+            # Final fallback
+            logger.error("All optimization attempts failed. Using equal weights.")
+            return np.ones(n_assets) / n_assets
 
         except Exception as e:
             logger.error(f"Error during optimization: {str(e)}", exc_info=True)
-            print(f"Error during optimization: {str(e)}")
-            # Fallback to equal weights, ensuring correct dimension
-            equal_weights = np.ones(n_assets) / n_assets
-            logger.info(f"Returning equal weights with length {len(equal_weights)} after exception")
-            return equal_weights
+            return np.ones(n_assets) / n_assets
 
     def compute_minimum_variance_weights(self, returns, cov_matrix):
         """
@@ -1058,9 +1095,12 @@ class CarbonAwarePortfolio:
                 years_since_base = 0
 
             # Calculate carbon footprint limit for this year
-            carbon_footprint_limit = carbon_footprint_base * (1 - theta) ** (years_since_base)
+            # Use a more gradual reduction approach
+            carbon_footprint_limit = carbon_footprint_base * (1 - theta) ** (years_since_base + 1)
+            # Add tolerance for optimization
+            carbon_footprint_limit_relaxed = carbon_footprint_limit * 1.10  # 10% tolerance
 
-            print(f"Net Zero Portfolio - Year {year}: Carbon limit = {carbon_footprint_limit:.2f}")
+            print(f"Net Zero Portfolio - Year {year}: Base CF = {carbon_footprint_base:.2f}, Target = {carbon_footprint_limit:.2f}, Relaxed = {carbon_footprint_limit_relaxed:.2f}")
 
             # Get emissions data for the given year
             emissions_col = f"Emissions_{year}"
@@ -1140,8 +1180,8 @@ class CarbonAwarePortfolio:
 
             # Compute portfolio using tracking error minimization with updated carbon constraint
             weights = self.optimize_carbon_constrained_portfolio(
-                np.zeros(n_assets), cov_matrix, filtered_emissions, filtered_market_cap, carbon_footprint_limit,
-                vw_weights
+                np.zeros(n_assets), cov_matrix, filtered_emissions, filtered_market_cap,
+                carbon_footprint_limit_relaxed, vw_weights
             )
 
             return weights
@@ -1323,6 +1363,13 @@ class CarbonAwarePortfolio:
 
                     print(f"Year {year} - VW Portfolio - WACI: {waci_vw:.2f}, CF: {cf_vw:.2f}")
 
+                    # Calcola il VW portfolio per il 2013 specificamente
+                    if year == 2013:
+                        # Calcola e salva il carbon footprint del value-weighted portfolio per l'anno base
+                        _, cf_base_2013 = self.calculate_portfolio_carbon_footprint(vw_weights, str(year))
+                        self.carbon_footprints[f"vw_{year}"] = (waci_vw, cf_base_2013)
+                        print(f"Year 2013 (Base Year) - VW Portfolio Carbon Footprint: {cf_base_2013:.2f}")
+
                     # Create a window of returns for calculating expected returns and covariance
                     # Use the standard 10-year window (120 months) of data before each allocation year
 
@@ -1420,6 +1467,20 @@ class CarbonAwarePortfolio:
                     self.carbon_footprints[f"mvc_{year}"] = (waci_mvc, cf_mvc)
 
                     print(f"Year {year} - MV Carbon Portfolio - WACI: {waci_mvc:.2f}, CF: {cf_mvc:.2f}")
+
+                    # Verifica che il carbon footprint sia correttamente ridotto
+                    if cf_mvc > carbon_limit:
+                        logger.warning(
+                            f"Year {year}: MV Carbon Portfolio exceeds limit: {cf_mvc:.2f} > {carbon_limit:.2f}")
+                        # Prova a ricalcolare con un limite leggermente più alto
+                        carbon_limit_relaxed = carbon_limit * 1.05
+                        mv_carbon_weights = self.compute_mv_portfolio_with_carbon_constraint(
+                            expected_returns, cov_matrix, str(year), carbon_limit_relaxed
+                        )
+                        waci_mvc, cf_mvc = self.calculate_portfolio_carbon_footprint(mv_carbon_weights, str(year))
+                        self.carbon_footprints[f"mvc_{year}"] = (waci_mvc, cf_mvc)
+                        print(
+                            f"Year {year} - MV Carbon Portfolio (Recalculated) - WACI: {waci_mvc:.2f}, CF: {cf_mvc:.2f}")
 
                     # Compute value-weighted portfolio with carbon constraint (50% of VW)
                     carbon_limit = 0.5 * cf_vw

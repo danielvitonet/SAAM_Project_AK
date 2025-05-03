@@ -367,6 +367,69 @@ def main():
 
                 print("\nNet Zero reduction plot generated: net_zero_reduction.png")
 
+                # Aggiungi una tabella riassuntiva
+                print("\nDetailed Carbon Footprint Summary:")
+                print("Year | MV CF | MVC CF | MVC Reduction | VW CF | VWC CF | VWC Reduction | NZ CF | NZ Target | NZ Gap")
+                print("-" * 100)
+
+                for year in range(2014, 2024):
+                    mv_cf = carbon_portfolio.carbon_footprints.get(f"mv_{year}", (0, 0))[1]
+                    mvc_cf = carbon_portfolio.carbon_footprints.get(f"mvc_{year}", (0, 0))[1]
+                    vw_cf = carbon_portfolio.carbon_footprints.get(f"vw_{year}", (0, 0))[1]
+                    vwc_cf = carbon_portfolio.carbon_footprints.get(f"vwc_{year}", (0, 0))[1]
+                    nz_cf = carbon_portfolio.carbon_footprints.get(f"nz_{year}", (0, 0))[1]
+
+                    mvc_reduction = 100 * (1 - mvc_cf / mv_cf) if mv_cf > 0 else 0
+                    vwc_reduction = 100 * (1 - vwc_cf / vw_cf) if vw_cf > 0 else 0
+
+                    # Calcolo target Net Zero
+                    years_since_2013 = year - 2013
+                    target_reduction = 100 * (1 - 0.9 ** years_since_2013)
+
+                    # Calcolo gap
+                    base_cf = carbon_portfolio.carbon_footprints.get(f"vw_2013", (0, 0))[1]
+                    actual_reduction = 100 * (1 - nz_cf / base_cf) if base_cf > 0 else 0
+                    gap = actual_reduction - target_reduction
+
+                    print(
+                        f"{year} | {mv_cf:.2f} | {mvc_cf:.2f} | {mvc_reduction:.1f}% | {vw_cf:.2f} | {vwc_cf:.2f} | {vwc_reduction:.1f}% | {nz_cf:.2f} | {target_reduction:.1f}% | {gap:+.1f}%")
+
+                # Aggiungi un plot dei reduction gaps
+                plt.figure(figsize=(12, 6))
+                years = list(range(2014, 2024))
+                actual_reductions = []
+                target_reductions = []
+
+                for year in years:
+                    # Calculate actual and target reductions
+                    years_since_2013 = year - 2013
+                    target = 100 * (1 - 0.9 ** years_since_2013)
+                    target_reductions.append(target)
+
+                    nz_cf = carbon_portfolio.carbon_footprints.get(f"nz_{year}", (0, 0))[1]
+                    base_cf = carbon_portfolio.carbon_footprints.get(f"vw_2013", (0, 0))[1]
+                    actual = 100 * (1 - nz_cf / base_cf) if base_cf > 0 else 0
+                    actual_reductions.append(actual)
+
+                plt.plot(years, target_reductions, 'r--', label='Target Reduction', linewidth=2)
+                plt.plot(years, actual_reductions, 'b-', label='Actual Reduction', linewidth=2)
+                plt.fill_between(years, target_reductions, actual_reductions,
+                                 where=(np.array(actual_reductions) > np.array(target_reductions)),
+                                 color='green', alpha=0.3, label='Exceeded Target')
+                plt.fill_between(years, target_reductions, actual_reductions,
+                                 where=(np.array(actual_reductions) < np.array(target_reductions)),
+                                 color='red', alpha=0.3, label='Below Target')
+
+                plt.title('Net Zero Strategy: Actual vs Target Reductions with Gaps')
+                plt.xlabel('Year')
+                plt.ylabel('Carbon Reduction (%)')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.savefig('net_zero_gap_visualization.png', dpi=300)
+                plt.close()
+
+                print("\nNet Zero gap visualization saved: net_zero_gap_visualization.png")
+
                 # ------------------------
                 # PART 3.2
                 # ------------------------
