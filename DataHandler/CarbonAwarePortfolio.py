@@ -4,6 +4,7 @@ import cvxpy as cp
 import matplotlib.pyplot as plt
 import logging
 import os
+import traceback
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -30,29 +31,30 @@ class CarbonAwarePortfolio:
         self.carbon_intensity = self.compute_carbon_intensity()
 
     def fix_invalid_weights(self, weights):
+        """
+        Fix invalid portfolio weights by handling NaN values and normalization
+        """
         logging.info(f"Input weights type: {type(weights)}, shape: {getattr(weights, 'shape', 'N/A')}")
-        logging.info(f"Input weights sample: {weights.head() if isinstance(weights, pd.Series) else weights}")
+        sample = weights[:5] if not isinstance(weights, pd.Series) else weights.head()
+        logging.info(f"Input weights sample: {sample}")
 
         if weights is None or not isinstance(weights, pd.Series):
             logging.warning("Weights is None or not a Series, returning equal weights")
             return pd.Series(1.0 / len(self.isins), index=self.isins)
 
         weights = weights.fillna(0)
-        if weights.sum() < 1e-8 or weights.isna().all():
-            logging.warning("All weights are zero or NaN, returning equal weights")
-            return pd.Series(1.0 / len(self.isins), index=self.isins)
-
         aligned_weights = pd.Series(0.0, index=self.isins)
-        common_isins = set(weights.index).intersection(set(self.isins))
+        common_isins = set(weights.index).intersection(self.isins)
+
         if not common_isins:
-            logging.warning("No common ISINs between weights and portfolio, returning equal weights")
+            logging.warning("No common ISINs. Using equal weights")
             return pd.Series(1.0 / len(self.isins), index=self.isins)
 
         aligned_weights.loc[list(common_isins)] = weights.loc[list(common_isins)]
-        if aligned_weights.sum() > 0:
+        if aligned_weights.sum() > 1e-8:
             aligned_weights = aligned_weights / aligned_weights.sum()
         else:
-            logging.warning("Aligned weights sum to zero, returning equal weights")
+            logging.warning("Weights sum to zero. Using equal weights")
             return pd.Series(1.0 / len(self.isins), index=self.isins)
 
         logging.info(f"Fixed weights sum: {aligned_weights.sum()}, non-zero: {(aligned_weights > 0).sum()}")
@@ -82,8 +84,16 @@ class CarbonAwarePortfolio:
             ('revenue_df', self.revenue_df)
         ]:
             if not set(df['ISIN']).issubset(isins):
-                logging.warning(f"{df_name} contains ISINs not in returns_df")
-                df.drop(df[~df['ISIN'].isin(isins)].index, inplace=True)
+                invalid_isins = set(df['ISIN']) - isins
+                logging.warning(f"{df_name} contains {len(invalid_isins)} ISINs not in returns_df")
+                if df_name == 'market_cap_df':
+                    self.market_cap_df = df[df['ISIN'].isin(isins)].copy()
+                elif df_name == 'scope1_df':
+                    self.scope1_df = df[df['ISIN'].isin(isins)].copy()
+                elif df_name == 'scope2_df':
+                    self.scope2_df = df[df['ISIN'].isin(isins)].copy()
+                elif df_name == 'revenue_df':
+                    self.revenue_df = df[df['ISIN'].isin(isins)].copy()
 
         # Check for year columns in scope1_df, scope2_df, revenue_df
         year_cols = self.get_year_columns(self.scope1_df)
@@ -121,6 +131,11 @@ class CarbonAwarePortfolio:
             logging.error("No valid year columns for carbon intensity calculation")
             raise ValueError("No valid year columns for carbon intensity calculation")
 
+        # Log missing 2013 data
+        scope1_missing = self.scope1_df[year_cols[0]].isna().sum()
+        scope2_missing = self.scope2_df[year_cols[0]].isna().sum()
+        logging.info(f"Missing 2013 data: Scope 1 = {scope1_missing}, Scope 2 = {scope2_missing}")
+
         # Initialize carbon intensity dataframe
         ci_df = pd.DataFrame()
         ci_df['ISIN'] = self.scope1_df['ISIN']
@@ -134,17 +149,9 @@ class CarbonAwarePortfolio:
             # Handle missing data with forward fill
             if i > 0:  # Not the first year
                 prev_year = year_cols[i - 1]
-                # Forward fill missing scope1 data
-                missing_scope1 = scope1.isna()
-                scope1[missing_scope1] = pd.to_numeric(self.scope1_df[prev_year], errors='coerce')[missing_scope1]
-
-                # Forward fill missing scope2 data
-                missing_scope2 = scope2.isna()
-                scope2[missing_scope2] = pd.to_numeric(self.scope2_df[prev_year], errors='coerce')[missing_scope2]
-
-                # Forward fill missing revenue data
-                missing_revenue = revenue.isna()
-                revenue[missing_revenue] = pd.to_numeric(self.revenue_df[prev_year], errors='coerce')[missing_revenue]
+                scope1 = scope1.fillna(pd.to_numeric(self.scope1_df[prev_year], errors='coerce'))
+                scope2 = scope2.fillna(pd.to_numeric(self.scope2_df[prev_year], errors='coerce'))
+                revenue = revenue.fillna(pd.to_numeric(self.revenue_df[prev_year], errors='coerce'))
 
             # Calculate carbon intensity
             total_emissions = scope1.fillna(0) + scope2.fillna(0)
@@ -165,13 +172,9 @@ class CarbonAwarePortfolio:
     def calculate_portfolio_carbon_footprint(self, weights, year, initial_investment=1e6):
         """
         Calculate portfolio carbon footprint for a given year
-
-        Fixed to handle weight validation and normalization more robustly
         """
         try:
             year_str = str(year)
-
-            # Check if we have data for this year
             if year_str not in self.scope1_df.columns or year_str not in self.scope2_df.columns:
                 logging.warning(f"Missing emissions data for year {year}")
                 return np.nan
@@ -181,60 +184,29 @@ class CarbonAwarePortfolio:
                 return np.nan
 
             # Validate weights
-            if weights is None or (isinstance(weights, pd.Series) and (weights.sum() < 0.001 or weights.isna().all())):
-                logging.warning(f"Invalid or empty weights for year {year}")
+            weights = self.fix_invalid_weights(weights)  # Ensure valid weights
+            if weights.isna().all() or weights.sum() < 1e-8:
+                logging.warning(f"Invalid weights for year {year} after fixing")
                 return np.nan
 
-            # Ensure weights is a Series with ISIN index
-            if not isinstance(weights, pd.Series):
-                logging.warning(f"Weights for year {year} not a Series. Converting.")
-                weights = pd.Series(weights)
+            # Align data
+            scope1 = pd.to_numeric(self.scope1_df[year_str], errors='coerce').reindex(weights.index, fill_value=0)
+            scope2 = pd.to_numeric(self.scope2_df[year_str], errors='coerce').reindex(weights.index, fill_value=0)
+            market_cap = pd.to_numeric(self.market_cap_df[year_str], errors='coerce').reindex(weights.index)
+            market_cap = market_cap.fillna(market_cap.mean()).where(market_cap > 0, market_cap.mean())
 
-            # Convert column names to string if they're numeric
-            scope1_df = self.scope1_df.copy()
-            scope2_df = self.scope2_df.copy()
-            market_cap_df = self.market_cap_df.copy()
-
-            # Normalize weights to sum to 1
-            if weights.sum() > 0:
-                weights = weights / weights.sum()
-            else:
-                logging.warning(f"Sum of weights for year {year} is non-positive. Using equal weights.")
-                weights = pd.Series(1.0 / len(weights), index=weights.index)
-
-            # Align emissions data by ISIN
-            scope1 = pd.to_numeric(scope1_df[year_str], errors='coerce')
-            scope1.index = scope1_df['ISIN']
-            scope2 = pd.to_numeric(scope2_df[year_str], errors='coerce')
-            scope2.index = scope2_df['ISIN']
-
-            # For Group AK, use both Scope 1 and Scope 2
-            total_emissions = scope1.add(scope2, fill_value=0)
-            total_emissions = total_emissions.reindex(weights.index, fill_value=0)
-
-            # Align market cap data by ISIN
-            market_cap = pd.to_numeric(market_cap_df[year_str], errors='coerce')
-            market_cap.index = market_cap_df['ISIN']
-            market_cap = market_cap.reindex(weights.index).fillna(market_cap.mean())
-
-            # Ensure no zero market caps
-            market_cap = market_cap.where(market_cap > 0, market_cap.mean())
-
-            # Calculate ownership fraction
+            total_emissions = scope1 + scope2
             portfolio_values = weights * initial_investment
             ownership = portfolio_values / market_cap
-
-            # Calculate carbon footprint
             carbon_footprint = np.sum(ownership * total_emissions) / initial_investment
 
-            # Validate result
-            if np.isnan(carbon_footprint) or np.isinf(carbon_footprint) or carbon_footprint < 0:
-                logging.warning(f"Invalid carbon footprint calculated for year {year}: {carbon_footprint}")
+            if np.isnan(carbon_footprint) or np.isinf(carbon_footprint) or carbon_footprint <= 0:
+                logging.warning(
+                    f"Invalid carbon footprint for year {year}: {carbon_footprint}. Weights sum: {weights.sum()}, Emissions sum: {total_emissions.sum()}")
                 return np.nan
 
             logging.info(f"Year {year}: CF = {carbon_footprint:.2f} tCO2e/$M")
             return carbon_footprint
-
         except Exception as e:
             logging.error(f"Error calculating carbon footprint for year {year}: {e}")
             return np.nan
@@ -242,230 +214,103 @@ class CarbonAwarePortfolio:
     def optimize_mv_with_carbon_constraint(self, expected_returns, cov_matrix, emissions, market_caps, carbon_limit):
         """
         Optimize minimum variance portfolio with carbon constraint
-
-        Improved solver approach and error handling
         """
         n_assets = len(expected_returns)
         w = cp.Variable(n_assets)
-        portfolio_variance = cp.quad_form(w, cov_matrix)
 
-        # Ownership-based carbon footprint
+        # Regularize covariance matrix
+        min_eigenval = np.min(np.linalg.eigvalsh(cov_matrix))
+        if min_eigenval < 1e-8:
+            cov_matrix += (abs(min_eigenval) + 1e-8) * np.eye(cov_matrix.shape[0])
+
+        portfolio_variance = cp.quad_form(w, cov_matrix)
         ownership_factor = emissions / market_caps
         carbon_footprint = cp.sum(cp.multiply(w, ownership_factor))
 
-        constraints = [
-            cp.sum(w) == 1,
-            w >= 0,
-            carbon_footprint <= carbon_limit
-        ]
-
+        constraints = [cp.sum(w) == 1, w >= 0, carbon_footprint <= carbon_limit]
         problem = cp.Problem(cp.Minimize(portfolio_variance), constraints)
 
-        # Try multiple solver approaches
         for solver, solver_name in [(cp.OSQP, "OSQP"), (cp.SCS, "SCS"), (cp.ECOS, "ECOS")]:
             try:
-                if solver_name == "OSQP":
-                    problem.solve(solver=solver, eps_abs=1e-5, eps_rel=1e-5, max_iter=10000)
-                elif solver_name == "SCS":
-                    problem.solve(solver=solver, eps=1e-5, max_iters=10000)
-                else:
-                    problem.solve(solver=solver)
-
+                problem.solve(solver=solver, verbose=True, max_iter=10000, eps_abs=1e-5, eps_rel=1e-5)
                 if problem.status in ["optimal", "optimal_inaccurate"]:
                     weights = w.value
-                    weights = np.maximum(weights, 0)  # Ensure non-negative weights
-                    weights = weights / np.sum(weights)  # Normalize
-                    actual_cf = np.sum(weights * (emissions / market_caps))
-
-                    # Check if carbon limit is satisfied with reasonable tolerance
-                    if actual_cf <= carbon_limit * 1.1:  # Allow 10% tolerance
-                        logging.info(f"Solver {solver_name}: Success, Final CF: {actual_cf:.2f}")
+                    weights = np.maximum(weights, 0) / np.sum(weights)
+                    actual_cf = np.sum(weights * ownership_factor)
+                    if actual_cf <= carbon_limit * 1.1:
+                        logging.info(f"Solver {solver_name}: Success, CF: {actual_cf:.2f}")
                         return pd.Series(weights, index=expected_returns.index)
-                    else:
-                        logging.warning(
-                            f"Solver {solver_name}: Carbon limit not satisfied. Actual: {actual_cf:.2f}, Limit: {carbon_limit:.2f}")
+                    logging.warning(f"Solver {solver_name}: CF {actual_cf:.2f} exceeds limit {carbon_limit:.2f}")
                 else:
                     logging.warning(f"Solver {solver_name} failed: {problem.status}")
             except Exception as e:
-                logging.error(f"Error with {solver_name} solver: {str(e)}")
+                logging.error(f"Error with {solver_name}: {e}")
 
-        # If all solvers fail or don't meet constraint, use a relaxed approach
+        # Relaxed optimization with penalty
+        carbon_violation = cp.pos(carbon_footprint - carbon_limit)
+        relaxed_objective = cp.Minimize(portfolio_variance + 1000 * carbon_violation)
+        relaxed_problem = cp.Problem(relaxed_objective, [cp.sum(w) == 1, w >= 0])
         try:
-            # Create a problem with relaxed carbon constraint as penalty term
-            carbon_violation = cp.pos(carbon_footprint - carbon_limit)
-            relaxed_objective = cp.Minimize(portfolio_variance + 1000 * carbon_violation)
-            relaxed_constraints = [cp.sum(w) == 1, w >= 0]
-
-            relaxed_problem = cp.Problem(relaxed_objective, relaxed_constraints)
-            relaxed_problem.solve(solver=cp.SCS)
-
+            relaxed_problem.solve(solver=cp.SCS, verbose=True)
             if relaxed_problem.status in ["optimal", "optimal_inaccurate"]:
                 weights = w.value
-                weights = np.maximum(weights, 0)
-                weights = weights / np.sum(weights)
-                actual_cf = np.sum(weights * (emissions / market_caps))
-                logging.info(f"Relaxed approach: CF = {actual_cf:.2f}, Target = {carbon_limit:.2f}")
+                weights = np.maximum(weights, 0) / np.sum(weights)
+                actual_cf = np.sum(weights * ownership_factor)
+                logging.info(f"Relaxed approach: CF = {actual_cf:.2f}")
                 return pd.Series(weights, index=expected_returns.index)
         except Exception as e:
-            logging.error(f"Relaxed optimization error: {str(e)}")
+            logging.error(f"Relaxed optimization failed: {e}")
 
-        # Last resort: find minimal carbon portfolio
-        try:
-            min_carbon = cp.Problem(
-                cp.Minimize(carbon_footprint),
-                [cp.sum(w) == 1, w >= 0]
-            )
-            min_carbon.solve(solver=cp.SCS)
-
-            if min_carbon.status in ["optimal", "optimal_inaccurate"]:
-                weights = w.value
-                weights = np.maximum(weights, 0)
-                weights = weights / np.sum(weights)
-                actual_cf = np.sum(weights * (emissions / market_caps))
-                logging.info(f"Minimum carbon approach: CF = {actual_cf:.2f}")
-                return pd.Series(weights, index=expected_returns.index)
-        except:
-            pass
-
-        # Final fallback: equal weights
-        logging.warning("All optimization approaches failed. Using equal weights")
+        logging.warning("All optimizations failed. Using equal weights")
         return pd.Series(np.ones(n_assets) / n_assets, index=expected_returns.index)
 
     def optimize_tracking_error_with_carbon_constraint(self, benchmark_weights, cov_matrix, emissions, market_caps,
-                                                       carbon_limit, lambda_penalty=0.1):
+                                                       carbon_limit, lambda_penalty=0.2):
         """
         Optimize portfolio to minimize tracking error with carbon constraint
-
-        Improved optimization approach and better target tracking
         """
         n_assets = len(benchmark_weights)
         w = cp.Variable(n_assets)
-
-        # Tracking error objective
         tracking_error = cp.quad_form(w - benchmark_weights, cov_matrix)
-
-        # Carbon footprint
         ownership_factor = emissions / market_caps
         carbon_footprint = cp.sum(cp.multiply(w, ownership_factor))
 
-        # We want to get close to the target, not just below it
-        # This helps avoid solutions that drastically overshoot the carbon reduction
+        # Use penalty for carbon deviation instead of hard constraint
         carbon_deviation = cp.abs(carbon_footprint - carbon_limit)
-
-        # Objective: minimize tracking error + penalty for deviating from carbon target
         objective = cp.Minimize(tracking_error + lambda_penalty * carbon_deviation)
-
-        constraints = [
-            cp.sum(w) == 1,
-            w >= 0,
-            # Hard constraint - must be below the limit
-            carbon_footprint <= carbon_limit
-        ]
+        constraints = [cp.sum(w) == 1, w >= 0]
 
         problem = cp.Problem(objective, constraints)
-
-        # Try multiple solvers
         for solver, solver_name in [(cp.OSQP, "OSQP"), (cp.SCS, "SCS"), (cp.ECOS, "ECOS")]:
             try:
-                if solver_name == "OSQP":
-                    problem.solve(solver=solver, eps_abs=1e-5, eps_rel=1e-5, max_iter=10000)
-                elif solver_name == "SCS":
-                    problem.solve(solver=solver, eps=1e-5, max_iters=10000)
-                else:
-                    problem.solve(solver=solver)
-
+                problem.solve(solver=solver, verbose=True, max_iter=10000, eps_abs=1e-5, eps_rel=1e-5)
                 if problem.status in ["optimal", "optimal_inaccurate"]:
                     weights = w.value
-                    weights = np.maximum(weights, 0)
-                    weights = weights / np.sum(weights)
-                    actual_cf = np.sum(weights * (emissions / market_caps))
-                    logging.info(
-                        f"Solver {solver_name}: Success, Final CF: {actual_cf:.2f}, Target CF: {carbon_limit:.2f}")
+                    weights = np.maximum(weights, 0) / np.sum(weights)
+                    actual_cf = np.sum(weights * ownership_factor)
+                    logging.info(f"Solver {solver_name}: Success, CF: {actual_cf:.2f}, Target: {carbon_limit:.2f}")
                     return pd.Series(weights, index=benchmark_weights.index)
-                else:
-                    logging.warning(f"Solver {solver_name} failed: {problem.status}")
+                logging.warning(f"Solver {solver_name} failed: {problem.status}")
             except Exception as e:
-                logging.error(f"Error with {solver_name} solver: {str(e)}")
+                logging.error(f"Error with {solver_name}: {e}")
 
-        # If all solvers fail, try a relaxed approach
-        try:
-            # Relax the carbon constraint and add as penalty
-            carbon_violation = cp.pos(carbon_footprint - carbon_limit)
-            relaxed_objective = cp.Minimize(tracking_error + 1000 * carbon_violation)
-            relaxed_constraints = [cp.sum(w) == 1, w >= 0]
-
-            relaxed_problem = cp.Problem(relaxed_objective, relaxed_constraints)
-            relaxed_problem.solve(solver=cp.SCS)
-
-            if relaxed_problem.status in ["optimal", "optimal_inaccurate"]:
-                weights = w.value
-                weights = np.maximum(weights, 0)
-                weights = weights / np.sum(weights)
-                actual_cf = np.sum(weights * (emissions / market_caps))
-                logging.info(f"Relaxed approach: CF = {actual_cf:.2f}, Target = {carbon_limit:.2f}")
-                return pd.Series(weights, index=benchmark_weights.index)
-        except Exception as e:
-            logging.error(f"Relaxed optimization error: {str(e)}")
-
-        # Last resort: use benchmark weights but scale down high emitters
-        logging.warning("Optimization failed. Using scaled benchmark weights.")
-
-        # Start with benchmark weights
+        # Fallback to scaled benchmark weights
         adjusted_weights = benchmark_weights.copy()
-
-        # Scale down weights of high emitters
         emissions_per_dollar = emissions / market_caps
         high_emitters = emissions_per_dollar > np.median(emissions_per_dollar)
-
-        # Reduce weights of high emitters by 50%
         scaling_factor = 0.5
         adjustment = adjusted_weights[high_emitters].sum() * (1 - scaling_factor)
         adjusted_weights[high_emitters] *= scaling_factor
-
-        # Distribute the adjustment to low emitters proportionally
-        low_emitters = ~high_emitters
-        if adjusted_weights[low_emitters].sum() > 0:
-            adjusted_weights[low_emitters] *= (1 + adjustment / adjusted_weights[low_emitters].sum())
-
-        # Normalize weights
+        if adjusted_weights[~high_emitters].sum() > 0:
+            adjusted_weights[~high_emitters] *= (1 + adjustment / adjusted_weights[~high_emitters].sum())
         adjusted_weights = adjusted_weights / adjusted_weights.sum()
-
-        return adjusted_weights
-
-    def optimize_net_zero_portfolio(self, benchmark_weights, cov_matrix, emissions, market_caps, target_cf, year,
-                                    base_year_cf):
-        """
-        Optimize portfolio for net zero target with better target tracking
-        """
-        logging.info(f"Year {year}: Target CF for NZ = {target_cf:.2f}")
-
-        # Calculate target reduction percentage for logging
-        years_elapsed = year - 2013
-        reduction_target = (1 - (1 - 0.1) ** years_elapsed) * 100
-        logging.info(f"Year {year}: Target reduction = {reduction_target:.1f}%")
-
-        # Choose an appropriate target - we want to hit the desired reduction but not overshoot
-        # Use 95% of the target value as our optimization target to ensure we meet the requirement
-        adjusted_target = target_cf * 0.95
-
-        # Tracking error optimization with carbon target
-        return self.optimize_tracking_error_with_carbon_constraint(
-            benchmark_weights,
-            cov_matrix,
-            emissions,
-            market_caps,
-            target_cf,  # Use original target as hard constraint
-            lambda_penalty=0.2  # Higher penalty to track carbon target more closely
-        )
+        return pd.Series(adjusted_weights, index=benchmark_weights.index)
 
     def run_carbon_constrained_optimization(self, returns_df, mv_weights, vw_weights_dict, start_year=2014,
                                             end_year=2023, window_size=120):
         """
         Run carbon-constrained portfolio optimization
-
-        Fixed to handle weight validation and data alignment better
         """
-        # Initialize results dictionary
         results = {
             'mv': {'weights': {}, 'returns': [], 'carbon_footprints': {}},
             'mvc': {'weights': {}, 'returns': [], 'carbon_footprints': {}},
@@ -476,7 +321,15 @@ class CarbonAwarePortfolio:
 
         # Prepare returns data
         returns_data = returns_df.iloc[:, 2:].apply(pd.to_numeric, errors='coerce')
-        date_columns = pd.to_datetime(returns_data.columns, errors='coerce')
+        if returns_data.columns.str.isdigit().all():  # Annual data
+            date_columns = pd.to_datetime([f"{int(col)}-12-31" for col in returns_data.columns])
+        else:
+            date_columns = pd.to_datetime(returns_data.columns, errors='coerce')
+
+        if date_columns.isna().any():
+            logging.error("Invalid date columns in returns_df")
+            raise ValueError("Invalid date columns in returns_df")
+
         returns_data.columns = date_columns
         returns_data = returns_data.T
         returns_data.columns = self.isins
@@ -523,8 +376,11 @@ class CarbonAwarePortfolio:
 
             if len(window_returns) < window_size * 0.8:
                 logging.warning(f"Insufficient data for year {year}: {len(window_returns)}/{window_size} months")
-                if len(window_returns) < window_size * 0.5:  # Less than 50% of required data
-                    continue
+                if year > start_year and year - 1 in results['mv']['weights']:
+                    results['mv']['weights'][year] = results['mv']['weights'][year - 1]
+                    results['vw']['weights'][year] = results['vw']['weights'][year - 1]
+                    logging.info(f"Using prior year's weights for {year}")
+                continue
 
             # Clean returns data - remove assets with all NaN
             valid_assets = window_returns.columns[~window_returns.isna().all()].tolist()
@@ -574,26 +430,34 @@ class CarbonAwarePortfolio:
 
             # Get minimum variance weights
             mv_weights_year = None
-            if rebalance_date in mv_weights and mv_weights[rebalance_date] is not None:
-                mv_weights_series = mv_weights[rebalance_date]
+            closest_mv_date = min(mv_weights.keys(), key=lambda x: abs(x - rebalance_date)) if mv_weights else None
+            if closest_mv_date in mv_weights and mv_weights[closest_mv_date] is not None:
+                mv_weights_series = mv_weights[closest_mv_date]
                 if isinstance(mv_weights_series, pd.Series):
                     mv_weights_year = mv_weights_series.reindex(valid_assets, fill_value=0)
-
-                    # Normalize weights
                     if mv_weights_year.sum() > 0:
                         mv_weights_year = mv_weights_year / mv_weights_year.sum()
                     else:
                         mv_weights_year = None
 
-            # If MV weights invalid, use minimum-variance optimization
-            if mv_weights_year is None or mv_weights_year.sum() < 0.999:
-                logging.warning(f"Invalid MV weights for {year}. Computing new weights.")
+            # Get value-weighted weights
+            vw_weights_year = None
+            closest_vw_date = min(vw_weights_dict.keys(),
+                                  key=lambda x: abs(x - rebalance_date)) if vw_weights_dict else None
+            if closest_vw_date in vw_weights_dict and vw_weights_dict[closest_vw_date] is not None:
+                vw_weights_series = vw_weights_dict[closest_vw_date]
+                if isinstance(vw_weights_series, pd.Series):
+                    vw_weights_year = vw_weights_series.reindex(valid_assets, fill_value=0)
+                    if vw_weights_year.sum() > 0:
+                        vw_weights_year = vw_weights_year / vw_weights_year.sum()
+                    else:
+                        vw_weights_year = None
 
-                # Solve minimum variance portfolio
+            # If weights are invalid, compute from scratch
+            if mv_weights_year is None or mv_weights_year.sum() < 0.999:
                 w = cp.Variable(len(valid_assets))
                 objective = cp.Minimize(cp.quad_form(w, cov_matrix))
                 constraints = [cp.sum(w) == 1, w >= 0]
-
                 problem = cp.Problem(objective, constraints)
                 try:
                     problem.solve(solver=cp.SCS)
@@ -603,34 +467,16 @@ class CarbonAwarePortfolio:
                         weights = weights / np.sum(weights)
                         mv_weights_year = pd.Series(weights, index=valid_assets)
                     else:
-                        # Fallback to equal weights
                         mv_weights_year = pd.Series(1.0 / len(valid_assets), index=valid_assets)
                 except:
-                    # Fallback to equal weights
                     mv_weights_year = pd.Series(1.0 / len(valid_assets), index=valid_assets)
 
-            # Get value-weighted weights
-            vw_weights_year = None
-            if rebalance_date in vw_weights_dict and vw_weights_dict[rebalance_date] is not None:
-                vw_weights_series = vw_weights_dict[rebalance_date]
-                if isinstance(vw_weights_series, pd.Series):
-                    vw_weights_year = vw_weights_series.reindex(valid_assets, fill_value=0)
-
-                    # Normalize weights
-                    if vw_weights_year.sum() > 0:
-                        vw_weights_year = vw_weights_year / vw_weights_year.sum()
-                    else:
-                        vw_weights_year = None
-
-            # If VW weights invalid, compute from market caps
             if vw_weights_year is None or vw_weights_year.sum() < 0.999:
-                logging.warning(f"Invalid VW weights for {year}. Computing from market caps.")
                 valid_caps = market_caps[market_caps > 0]
                 if len(valid_caps) > 0:
                     vw_weights_year = pd.Series(0.0, index=valid_assets)
                     vw_weights_year.loc[valid_caps.index] = valid_caps / valid_caps.sum()
                 else:
-                    # Fallback to equal weights
                     vw_weights_year = pd.Series(1.0 / len(valid_assets), index=valid_assets)
 
             # Store valid weights
@@ -640,6 +486,12 @@ class CarbonAwarePortfolio:
             # Calculate carbon footprints
             mv_cf = self.calculate_portfolio_carbon_footprint(mv_weights_year, year - 1)
             vw_cf = self.calculate_portfolio_carbon_footprint(vw_weights_year, year - 1)
+
+            # Log warning if carbon footprints are invalid
+            if mv_cf == 0:
+                logging.warning(f"Zero carbon footprint for MV portfolio in {year}. Check weights and emissions data.")
+            if vw_cf == 0:
+                logging.warning(f"Zero carbon footprint for VW portfolio in {year}. Check weights and emissions data.")
 
             # Store first year VW carbon footprint for NZ calculations
             if year == start_year:
@@ -658,11 +510,12 @@ class CarbonAwarePortfolio:
                 )
                 results['mvc']['weights'][year] = mvc_weights
                 mvc_cf = self.calculate_portfolio_carbon_footprint(mvc_weights, year - 1)
+                if mvc_cf == 0:
+                    logging.warning(f"Zero carbon footprint for MVC portfolio in {year}. Verify optimizer results.")
                 results['mvc']['carbon_footprints'][year] = mvc_cf
                 logging.info(f"Year {year}: MVC Target CF = {carbon_limit_mv:.2f}, Actual CF = {mvc_cf:.2f}")
             else:
                 logging.warning(f"Invalid MV carbon footprint for {year}: {mv_cf}. Using VW as reference.")
-                # If MV footprint is invalid, use VW as reference with 50% reduction
                 carbon_limit_mv = 0.5 * vw_cf if not np.isnan(vw_cf) and vw_cf > 0 else np.inf
                 mvc_weights = self.optimize_mv_with_carbon_constraint(
                     expected_returns, cov_matrix, emissions, market_caps, carbon_limit_mv
@@ -673,18 +526,17 @@ class CarbonAwarePortfolio:
                 logging.info(
                     f"Year {year}: MVC using VW reference, Target CF = {carbon_limit_mv:.2f}, Actual CF = {mvc_cf:.2f}")
 
-            # VWC: Fixed to follow project specification
-            # The project spec mentions both "25% reduction" and "CF(p) ≤ 0.5 × CF(P(vw))"
-            # Based on the project report, it appears the 25% reduction (i.e., 75% of original) was used
+            # VWC: 25% reduction relative to VW
             if not np.isnan(vw_cf) and vw_cf > 0:
-                # Use 0.75 for a 25% reduction as specified in the report and match reported results
-                carbon_limit_vw = 0.75 * vw_cf
+                carbon_limit_vw = 0.75 * vw_cf  # 25% reduction
                 logging.info(f"Year {year}: VWC Target CF = {carbon_limit_vw:.2f} (75% of VW {vw_cf:.2f})")
                 vwc_weights = self.optimize_tracking_error_with_carbon_constraint(
                     vw_weights_year, cov_matrix, emissions, market_caps, carbon_limit_vw
                 )
                 results['vwc']['weights'][year] = vwc_weights
                 vwc_cf = self.calculate_portfolio_carbon_footprint(vwc_weights, year - 1)
+                if vwc_cf == 0:
+                    logging.warning(f"Zero carbon footprint for VWC portfolio in {year}. Verify optimizer results.")
                 results['vwc']['carbon_footprints'][year] = vwc_cf
                 logging.info(f"Year {year}: VWC Target CF = {carbon_limit_vw:.2f}, Actual CF = {vwc_cf:.2f}")
             else:
@@ -696,8 +548,8 @@ class CarbonAwarePortfolio:
             if first_year_vw_cf is not None and not np.isnan(first_year_vw_cf) and first_year_vw_cf > 0:
                 years_elapsed = year - start_year + 1
                 target_cf = first_year_vw_cf * ((1 - 0.1) ** years_elapsed)
-                nz_weights = self.optimize_net_zero_portfolio(
-                    vw_weights_year, cov_matrix, emissions, market_caps, target_cf, year, first_year_vw_cf
+                nz_weights = self.optimize_tracking_error_with_carbon_constraint(
+                    vw_weights_year, cov_matrix, emissions, market_caps, target_cf
                 )
                 results['nz']['weights'][year] = nz_weights
                 nz_cf = self.calculate_portfolio_carbon_footprint(nz_weights, year - 1)

@@ -6,85 +6,72 @@ Group AK: Europe / Scope 1+2
 PART 1: STANDARD ASSET ALLOCATION
 ----------------------------------------
 Minimum Variance Portfolio (P^(mv)_oos):
-  Annualized Return: 1.25%
-  Annualized Volatility: 15.10%
-  Sharpe Ratio: 0.083
+  Annualized Return: 5.78%
+  Annualized Volatility: 19.05%
+  Sharpe Ratio: 0.304
 
 Value-Weighted Portfolio (P^(vw)):
-  Annualized Return: 5.34%
-  Annualized Volatility: 17.13%
-  Sharpe Ratio: 0.311
+  Annualized Return: 5.47%
+  Annualized Volatility: 17.07%
+  Sharpe Ratio: 0.321
 
 Comparison:
-  Return Difference (MV - VW): -4.08%
-  Volatility Difference (MV - VW): -2.03%
+  Return Difference (MV - VW): 0.31%
+  Volatility Difference (MV - VW): 1.98%
 
 PART 2: ASSET ALLOCATION WITH CARBON EMISSIONS REDUCTION
 ----------------------------------------
 2.1 Carbon Footprints of Standard Portfolios:
-  2014: MV = 71.97, VW = 235.79 tCO2e/$M
-  2015: MV = 2119.97, VW = 181.04 tCO2e/$M
-  2016: MV = 527.95, VW = 174.90 tCO2e/$M
-  2017: MV = 1132.24, VW = 209.72 tCO2e/$M
-  2018: MV = 447.64, VW = 188.70 tCO2e/$M
-  2019: MV = 202.98, VW = 155.07 tCO2e/$M
-  2020: MV = 68.16, VW = 149.85 tCO2e/$M
-  2021: MV = 30.60, VW = 144.92 tCO2e/$M
-  2022: MV = 28.60, VW = 118.14 tCO2e/$M
-  2023: MV = 24.61, VW = 108.74 tCO2e/$M
+  2014: MV = nan, VW = nan tCO2e/$M
+  2015: MV = nan, VW = nan tCO2e/$M
+  2016: MV = nan, VW = nan tCO2e/$M
+  2017: MV = nan, VW = nan tCO2e/$M
+  2018: MV = nan, VW = nan tCO2e/$M
+  2019: MV = nan, VW = nan tCO2e/$M
+  2020: MV = nan, VW = nan tCO2e/$M
+  2021: MV = nan, VW = nan tCO2e/$M
+  2022: MV = nan, VW = nan tCO2e/$M
+  2023: MV = nan, VW = nan tCO2e/$M
 
 2.2 Minimum Variance with 50% Carbon Reduction (P^(mv)_oos(0.5)):
-  Annualized Return: 1.79%
-  Annualized Volatility: 13.20%
-  Sharpe Ratio: 0.136
-  Average Carbon Footprint: 153.92 tCO2e/$M
-  Average Carbon Reduction: 50.0%
+  Annualized Return: 1.25%
+  Annualized Volatility: 14.18%
+  Sharpe Ratio: 0.088
+  Average Carbon Footprint: nan tCO2e/$M
 
 2.3 Value-Weighted with 25% Carbon Reduction (P^(vw)_oos(0.75)):
-  Annualized Return: 6.09%
-  Annualized Volatility: 16.00%
-  Sharpe Ratio: 0.381
-  Average Carbon Footprint: 117.19 tCO2e/$M
-  Average Carbon Reduction: 25.0%
+  Annualized Return: 5.47%
+  Annualized Volatility: 17.07%
+  Sharpe Ratio: 0.321
+  Average Carbon Footprint: nan tCO2e/$M
 
 2.4 Trade-off Analysis:
 
 Active Investor (MV vs MVC):
-  Return Cost: 0.54%
-  Volatility Impact: -1.90%
-  Sharpe Ratio Impact: 0.053
-  Carbon Reduction Achieved: 50.0%
+  Return Cost: -4.54%
+  Volatility Impact: -4.88%
+  Sharpe Ratio Impact: -0.216
 
 Passive Investor (VW vs VWC):
-  Return Cost: 0.76%
-  Volatility Impact: -1.13%
-  Sharpe Ratio Impact: 0.069
-  Carbon Reduction Achieved: 25.0%
+  Return Cost: 0.00%
+  Volatility Impact: 0.00%
+  Sharpe Ratio Impact: 0.000
 
 PART 3: ALLOCATION WITH NET ZERO OBJECTIVE
 ----------------------------------------
 3.1 Net Zero Portfolio (P^(vw)_oos(NZ)):
-  Annualized Return: 6.13%
-  Annualized Volatility: 16.00%
-  Sharpe Ratio: 0.383
-  Average Carbon Footprint: 122.37 tCO2e/$M
+  Annualized Return: 5.47%
+  Annualized Volatility: 17.07%
+  Sharpe Ratio: 0.321
+  Average Carbon Footprint: nan tCO2e/$M
 
 Annual Carbon Footprint Reduction:
-  2016: Actual = 27.1%, Target = 27.1%
-  2017: Actual = 34.4%, Target = 34.4%
-  2018: Actual = 41.0%, Target = 41.0%
-  2019: Actual = 46.9%, Target = 46.9%
-  2020: Actual = 52.2%, Target = 52.2%
-  2021: Actual = 57.0%, Target = 57.0%
-  2022: Actual = 61.3%, Target = 61.3%
-  2023: Actual = 65.1%, Target = 65.1%
 
 3.2 Cost of Constructing a Net Zero Portfolio:
-  Return Cost vs Value-Weighted: 0.79%
-  Volatility Impact vs Value-Weighted: -1.13%
-  Sharpe Ratio Impact vs Value-Weighted: 0.072
-  Additional Return Cost vs 25% Reduction: 0.03%
-  Final Carbon Reduction Achieved: 65.1%
+  Return Cost vs Value-Weighted: 0.00%
+  Volatility Impact vs Value-Weighted: 0.00%
+  Sharpe Ratio Impact vs Value-Weighted: 0.000
+  Additional Return Cost vs 25% Reduction: 0.00%
 
 ================================================================================
 Warnings:

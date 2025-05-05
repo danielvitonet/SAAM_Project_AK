@@ -80,14 +80,9 @@ def calculate_value_weighted_portfolio(market_cap_df, returns_df):
         valid_count = valid_mask.sum()
 
         if valid_count == 0:
-            logging.warning(f"No valid market caps for {start_date}, using equal weights")
-            valid_mask = ~market_caps.isna()  # Just remove NaNs
-            if valid_mask.sum() == 0:
-                logging.error(f"No valid market cap data at all for {start_date}, skipping period")
-                weights_dict[start_date] = None
-                continue
-
-            valid_caps = pd.Series(1.0, index=market_caps[valid_mask].index)
+            logging.error(f"No valid market caps for {start_date}. Skipping period.")
+            weights_dict[start_date] = None
+            continue
         else:
             valid_caps = market_caps[valid_mask]
             logging.info(f"Using {valid_count} assets with valid market caps for {start_date}")
@@ -164,52 +159,61 @@ def plot_cumulative_returns(mv_returns, vw_returns, output_path):
     mv_returns = mv_returns[np.isfinite(mv_returns)]
     vw_returns = vw_returns[np.isfinite(vw_returns)]
 
-    # Get common date range
-    common_dates = mv_returns.index.intersection(vw_returns.index)
-    if len(common_dates) == 0:
-        logging.error("No common dates between MV and VW returns. Cannot create plot.")
+    if mv_returns.empty and vw_returns.empty:
+        logging.error("No valid returns for plotting.")
         return None, None
 
-    mv_returns = mv_returns[common_dates]
-    vw_returns = vw_returns[common_dates]
-
-    # Calculate cumulative returns
-    mv_cumulative = (1 + mv_returns).cumprod() - 1
-    vw_cumulative = (1 + vw_returns).cumprod() - 1
-
-    # Create figure
     plt.figure(figsize=(12, 8))
-    plt.plot(mv_cumulative.index, mv_cumulative.values * 100, 'b-', label='Minimum Variance', linewidth=2)
-    plt.plot(vw_cumulative.index, vw_cumulative.values * 100, 'r-', label='Value-Weighted', linewidth=2)
 
-    # Add a horizontal line at y=0
+    # Initialize cumulative returns variables
+    mv_cumulative = None
+    vw_cumulative = None
+
+    if not vw_returns.empty:
+        vw_cumulative = (1 + vw_returns).cumprod() - 1
+        plt.plot(vw_cumulative.index, vw_cumulative.values * 100, 'r-', label='Value-Weighted', linewidth=2)
+        logging.info("Plotted VW cumulative returns.")
+
+    if not mv_returns.empty:
+        mv_cumulative = (1 + mv_returns).cumprod() - 1
+        plt.plot(mv_cumulative.index, mv_cumulative.values * 100, 'b-', label='Minimum Variance', linewidth=2)
+        logging.info("Plotted MV cumulative returns.")
+
+    # Check for common dates only if both return series exist
+    if not mv_returns.empty and not vw_returns.empty:
+        common_dates = mv_returns.index.intersection(vw_returns.index)
+        if common_dates.empty:
+            logging.warning("No common dates for MV and VW returns. Plotting available data.")
+        else:
+            if mv_cumulative is not None:
+                mv_cumulative = mv_cumulative[common_dates]
+            if vw_cumulative is not None:
+                vw_cumulative = vw_cumulative[common_dates]
+
     plt.axhline(y=0, color='gray', linestyle='--', alpha=0.7)
-
-    # Add grid
     plt.grid(True, alpha=0.3)
-
-    # Add labels and title
     plt.title('Cumulative Returns: Minimum Variance vs Value-Weighted', fontsize=14, fontweight='bold')
     plt.xlabel('Date', fontsize=12)
     plt.ylabel('Cumulative Return (%)', fontsize=12)
     plt.legend(fontsize=12, loc='best')
-
-    # Format y-axis as percentage
     plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.1f}%'))
 
     # Add annotations for final values
-    final_mv = mv_cumulative.iloc[-1] * 100
-    final_vw = vw_cumulative.iloc[-1] * 100
-    plt.annotate(f'{final_mv:.1f}%',
-                 xy=(mv_cumulative.index[-1], final_mv),
-                 xytext=(5, 5),
-                 textcoords='offset points',
-                 fontweight='bold')
-    plt.annotate(f'{final_vw:.1f}%',
-                 xy=(vw_cumulative.index[-1], final_vw),
-                 xytext=(5, 5),
-                 textcoords='offset points',
-                 fontweight='bold')
+    if mv_cumulative is not None and not mv_cumulative.empty:
+        final_mv = mv_cumulative.iloc[-1] * 100
+        plt.annotate(f'{final_mv:.1f}%',
+                     xy=(mv_cumulative.index[-1], final_mv),
+                     xytext=(5, 5),
+                     textcoords='offset points',
+                     fontweight='bold')
+
+    if vw_cumulative is not None and not vw_cumulative.empty:
+        final_vw = vw_cumulative.iloc[-1] * 100
+        plt.annotate(f'{final_vw:.1f}%',
+                     xy=(vw_cumulative.index[-1], final_vw),
+                     xytext=(5, 5),
+                     textcoords='offset points',
+                     fontweight='bold')
 
     # Save figure
     plt.tight_layout()
