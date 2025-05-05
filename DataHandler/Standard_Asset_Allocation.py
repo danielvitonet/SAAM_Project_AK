@@ -195,7 +195,6 @@ def run_portfolio_optimization(returns_df, window_size=120):
                 'max_return': portfolio_returns.max()
             }
 
-            logging.info(
-                f"Portfolio metrics calculated: Return={annualized_return:.4f}, Vol={annualized_volatility:.4f}, SR={sharpe_ratio:.4f}")
+            logging.info(f"Portfolio metrics calculated: Return={annualized_return:.4f}, Vol={annualized_volatility:.4f}, SR={sharpe_ratio:.4f}")
 
     return metrics, portfolio_returns, weights_dict, valid_cols_dict

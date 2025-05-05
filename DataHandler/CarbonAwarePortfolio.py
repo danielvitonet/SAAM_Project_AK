@@ -30,45 +30,32 @@ class CarbonAwarePortfolio:
         self.carbon_intensity = self.compute_carbon_intensity()
 
     def fix_invalid_weights(self, weights):
-        """
-        Fix invalid portfolio weights by handling NaN values and normalization
+        logging.info(f"Input weights type: {type(weights)}, shape: {getattr(weights, 'shape', 'N/A')}")
+        logging.info(f"Input weights sample: {weights.head() if isinstance(weights, pd.Series) else weights}")
 
-        Args:
-            weights: Series of weights indexed by ISIN
+        if weights is None or not isinstance(weights, pd.Series):
+            logging.warning("Weights is None or not a Series, returning equal weights")
+            return pd.Series(1.0 / len(self.isins), index=self.isins)
 
-        Returns:
-            Series of fixed weights
-        """
-        if weights is None:
-            return pd.Series(0.0, index=self.isins)
-
-        # Convert to Series if it's not already
-        if not isinstance(weights, pd.Series):
-            try:
-                weights = pd.Series(weights)
-            except:
-                return pd.Series(0.0, index=self.isins)
-
-        # Handle NaN values
         weights = weights.fillna(0)
+        if weights.sum() < 1e-8 or weights.isna().all():
+            logging.warning("All weights are zero or NaN, returning equal weights")
+            return pd.Series(1.0 / len(self.isins), index=self.isins)
 
-        # Check if all weights are zero
-        if weights.sum() < 1e-8:
-            return pd.Series(0.0, index=self.isins)
-
-        # Normalize weights to sum to 1
-        weights = weights / weights.sum()
-
-        # Ensure weights are aligned with the isins in the portfolio
         aligned_weights = pd.Series(0.0, index=self.isins)
         common_isins = set(weights.index).intersection(set(self.isins))
+        if not common_isins:
+            logging.warning("No common ISINs between weights and portfolio, returning equal weights")
+            return pd.Series(1.0 / len(self.isins), index=self.isins)
 
-        if len(common_isins) > 0:
-            aligned_weights.loc[list(common_isins)] = weights.loc[list(common_isins)]
-            # Re-normalize if needed
-            if aligned_weights.sum() > 0:
-                aligned_weights = aligned_weights / aligned_weights.sum()
+        aligned_weights.loc[list(common_isins)] = weights.loc[list(common_isins)]
+        if aligned_weights.sum() > 0:
+            aligned_weights = aligned_weights / aligned_weights.sum()
+        else:
+            logging.warning("Aligned weights sum to zero, returning equal weights")
+            return pd.Series(1.0 / len(self.isins), index=self.isins)
 
+        logging.info(f"Fixed weights sum: {aligned_weights.sum()}, non-zero: {(aligned_weights > 0).sum()}")
         return aligned_weights
 
     def validate_data(self):
