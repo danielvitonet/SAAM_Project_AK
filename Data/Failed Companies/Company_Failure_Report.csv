@@ -1,0 +1,142 @@
+ISIN,Name,Country,Region,Reason
+AT000000STR1,STRABAG SE,AT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+AT00000VIE62,FLUGHAFEN WIEN,AT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+AT0000746409,VERBUND,AT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+AT0000938204,MAYR-MELNHOF KARTON,AT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+AT0000A21KS2,IMMOFINANZ,AT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+BE0974271034,VIOHALCO,BE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+BE0974320526,UMICORE,BE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+BE0974338700,TITAN CEMENT,BE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+CH0012268360,KUDELSKI 'B',CH,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+CH0418792922,SIKA,CH,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+CH1169151003,GEORG FISCHER,CH,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+CH1175448666,STRAUMANN HLDG.,CH,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+CH1216478797,DSM FIRMENICH,CH,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data; DS_REV_USD_Y.xlsx: >20% missing data
+CH1256740924,SGS 'N',CH,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DE0005408884,LEONI DEAD - DELIST.21/08/23,DE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DE0006569908,MLP,DE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DE0007042301,RHOEN-KLINIKUM,DE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DE0007507501,WASHTEC,DE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DE000A2GS401,SOFTWARE N DEAD - DELIST.26/08/24,DE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DE000CLS1001,MCKESSON EUROPE DEAD - DELIST.15/06/23,DE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DE000TUAG505,TUI N,DE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DK0061539921,VESTAS WINDSYSTEMS,DK,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+DK0061804697,H LUNDBECK A,DK,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FI4000297767,NORDEA BANK,FI,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FI4000440664,NELES DEAD - DELIST.01/04/22,FI,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR0000039109,SECHE ENVIRONNEMENT,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR0000130403,CHRISTIAN DIOR,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR0013280286,BIOMERIEUX,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR0013326246,UNIBAIL RODAMCO WE STAPLED UNITS,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR0013505062,VANTIVA,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR0013506730,VALLOUREC,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR0014003TT8,DASSAULT SYSTEMES,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+FR001400AJ45,MICHELIN,FR,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0000365774,ANGLO-EASTERN PLTNS.,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0000600931,BRAEMAR,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0001048619,TED BAKER DEAD - DELIST.24/10/22,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0001570810,XAAR,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0001667087,CAMELLIA,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0001795680,CASTINGS,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0002015021,TCLARKE DEAD - DELIST.26/06/24,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0002018363,CLARKSON,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0002349065,REA HOLDINGS,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0003062816,TOWN CENTRE SECURITIES,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0003395000,FISHER(JAMES)& SONS,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0004170089,HEADLAM GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0005522007,MCKAY SECURITIES DEAD - DELIST.09/05/22,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0005746358,MCBRIDE,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0005790059,MENZIES (JOHN) DEAD - DELIST.05/08/22,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0006449366,ECORA RESOURCES,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0006640972,4IMPRINT GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0007370074,RICARDO,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0007689002,KIN AND CARTA DEAD - DELIST.29/04/24,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0008475088,ROBERT WALTERS,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0009067447,MOTHERCARE,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0009296665,VIDENDUM,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0009692319,WILMINGTON,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0030181522,TRIBAL GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0030329360,WINCANTON DEAD - DELIST.30/04/24,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB0034291418,CENTAUR MEDIA,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B01CZ652,HORNBY,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B03HDJ73,ESKEN LIMITED DEAD - DELIST.02/04/24,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B17MMZ46,LOOKERS DEAD - DELIST.09/10/23,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B18P5K83,TOPPS TILES,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B1P6ZR11,BROWN GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B3CX3644,STV GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B572ZV91,PHAROS ENERGY,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B64NSP76,COSTAIN GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B6YTLS95,STAGECOACH GROUP DEAD - DELIST.28/06/22,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00B8B4R053,STUDIO RETAIL GROUP DEAD - DELIST.25/02/22,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BD6K4575,COMPASS GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BD736828,AIR PARTNER DEAD - DEAD 04/04/22,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BDFBVT43,OXFORD BIOMEDICA,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BDR05C01,NATIONAL GRID,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BF044593,CLS HOLDINGS,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BF5H9P87,GREAT PORTLAND ESTATES,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BF8Q6K64,ABRDN,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BG11K365,REDROW DEAD - DELIST.23/08/24,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BGDT3G23,RIGHTMOVE,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BHJYC057,ICTL.HTLS.GP.,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BJ1F4N75,MICRO FOCUS INTL. DEAD - DELIST.01/02/23,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BJFFLV09,CRODA INTERNATIONAL,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BJQZC279,DAILY MAIL 'A' DEAD - DELIST.10/01/22,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BJT0FF39,RM,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BK9RKT01,TRAVIS PERKINS,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BKP36R26,HYVE GROUP DEAD - DELIST.23/05/23,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BKY40Q38,GALLIFORD TRY,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BL6XZ716,CAPITAL & REGIONAL DEAD - DELIST.11/12/24,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BLGZ9862,TESCO,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BM8PJY71,NATWEST GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BM8Q5M07,JD SPORTS FASHION,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BN7SWP63,GLAXOSMITHKLINE,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BNGDN821,MELROSE INDUSTRIES,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BNNTLN49,PENNON GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BNR4T868,RENEWI,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BP6MXD84,SHELL,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BP92CJ43,TATE & LYLE,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BP9LHF23,SCHRODERS,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BPQY8M80,AVIVA,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BRKD9Z53,MJ GLEESON,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BYW0PQ60,LAND SECURITIES GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BYYTFB60,HOMESERVE DEAD - DELIST.05/01/23,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+GB00BYZN9041,FUTURE,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IE00B00MZ448,GRAFTON GROUP,IE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IE00B010DT83,C&C GROUP,IE,EUR,DS_REV_USD_Y.xlsx: >20% missing data
+IE00BD1RP616,BANK OF IRELAND GROUP,IE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IE00BF0L3536,AIB GROUP,IE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IE00BK9ZQ967,TRANE TECHNOLOGIES,IE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IE00BLP1HW54,AON CLASS A,IE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IL0010849045,BATM ADVANCED COMMS.,IL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IL0010943905,AMIAD WATER SYSTEMS,IL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data; DS_REV_USD_Y.xlsx: >20% missing data
+IT0001042610,SABAF,IT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IT0005218380,BANCO BPM,IT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IT0005239360,UNICREDIT,IT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IT0005495657,SAIPEM,IT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IT0005496473,TESSELLIS,IT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+IT0005508921,BANCA MONTE DEI PASCHI,IT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+JE00BJ1DLW90,MAN GROUP,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+JE00BJ1F3079,AMCOR,GB,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+JE00BYVQYS01,INTERNATIONAL WORKPLACE GROUP,CH,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NL0013267909,AKZO NOBEL,NL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NL0013332471,TOM TOM,NL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NL00150001Q9,STELLANTIS,NL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NL00150003E1,FUGRO C,NL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NL0015001FS8,FERROVIAL,NL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NL0015435975,DAVIDE CAMPARI MILANO,IT,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NO0010215684,AKASTOR,NO,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NO0010861990,PROSAFE,NO,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+NO0012470089,TOMRA SYSTEMS,NO,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0011090018,HOLMEN B,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0011166974,FABEGE,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0011256312,ENIRO GROUP,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0015811955,INVESTOR A,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0015812219,SWEDISH MATCH DEAD - DELIST.02/01/23,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0015961909,HEXAGON B,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0015988019,NIBE INDUSTRIER,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0016589188,ELECTROLUX B,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0017486889,ATLAS COPCO A,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0018012494,MODERN TIMES GROUP MTG B,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0018012635,WIHLBORGS FASTIGHETER,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+SE0020050417,BOLIDEN ORD SHS,SE,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
+US91822M5022,VEON ADR 1:25,NL,EUR,Scope_1.xlsx: >20% missing data; Scope_2.xlsx: >20% missing data
